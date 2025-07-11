@@ -371,7 +371,8 @@ class StockCollectorAgent(Agent):
                 
                 # Atualizar fundamentals se tiver
                 if fundamentals:
-                    self.stock_repo.update_stock_fundamentals(stock_data.codigo, fundamentals)
+                    self.stock_repo.update_stock_fundamentals(
+                        stock_data.codigo, fundamentals)
                 
                 logger.debug(f"Ação atualizada: {stock_data.codigo}")
             else:
