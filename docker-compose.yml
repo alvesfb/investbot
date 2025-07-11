@@ -1,0 +1,84 @@
+# docker-compose.yml - Ambiente de desenvolvimento
+version: '3.8'
+
+services:
+  # Aplicação principal
+  investment-system:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile.dev
+    container_name: investment-system-api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - ENVIRONMENT=development
+      - DATABASE_URL=sqlite:///./data/investment_system.db
+    env_file:
+      - .env
+    depends_on:
+      - redis
+    networks:
+      - investment-network
+    restart: unless-stopped
+    command: uvicorn api.main:app --host 0.0.0.0 --port 8000 --reload
+
+  # Redis para cache (será usado em fases posteriores)
+  redis:
+    image: redis:7-alpine
+    container_name: investment-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - investment-network
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+
+  # PostgreSQL (para migração da Fase 4)
+  postgres:
+    image: postgres:15-alpine
+    container_name: investment-postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_DB: investment_system
+      POSTGRES_USER: investment_user
+      POSTGRES_PASSWORD: investment_pass
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - investment-network
+    restart: unless-stopped
+
+  # Agno Agent UI (frontend)
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile.dev
+    container_name: investment-frontend
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+    networks:
+      - investment-network
+    restart: unless-stopped
+    depends_on:
+      - investment-system
+
+volumes:
+  postgres_data:
+  redis_data:
+
+networks:
+  investment-network:
+    driver: bridge
