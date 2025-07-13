@@ -437,7 +437,7 @@ class Phase1Validator:
             
             # Verificar se Agno está disponível
             try:
-                from agno import Agent
+                from agno.agent import Agent
                 details["agno_available"] = True
             except ImportError:
                 details["agno_available"] = False
