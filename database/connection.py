@@ -9,23 +9,21 @@ from contextlib import contextmanager
 from typing import Generator
 import sqlite3
 import logging
-
-from config.settings import get_settings
+from pathlib import Path
 
 # Configurar logging
 logger = logging.getLogger(__name__)
 
 # Configurações globais
-settings = get_settings()
+DATABASE_URL = "sqlite:///./data/investment_system.db"
 
 # Engine do SQLAlchemy
 engine = create_engine(
-    settings.database_url,
-    echo=settings.database_echo,  # Log de queries SQL se debug
+    DATABASE_URL,
+    echo=False,  # Não fazer log de queries por padrão
     pool_pre_ping=True,  # Verifica conexão antes de usar
     pool_recycle=3600,  # Recicla conexões a cada hora
-    connect_args={"check_same_thread": False} if "sqlite" in
-    settings.database_url else {}
+    connect_args={"check_same_thread": False}  # SQLite específico
 )
 
 # SessionLocal para criar sessões
@@ -50,7 +48,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
         cursor.execute("PRAGMA busy_timeout=20000")  # Timeout de 20 segundos
 
         cursor.close()
-        logger.info("SQLite pragmas configurados")
+        logger.debug("SQLite pragmas configurados")
 
 
 def get_db() -> Generator[Session, None, None]:
@@ -89,9 +87,8 @@ def get_db_session() -> Generator[Session, None, None]:
 
 def create_tables():
     """Cria todas as tabelas definidas nos modelos"""
-    from database.models import Base
-
     try:
+        from database.models import Base
         Base.metadata.create_all(bind=engine)
         logger.info("Tabelas criadas com sucesso")
         return True
@@ -102,9 +99,8 @@ def create_tables():
 
 def drop_tables():
     """Remove todas as tabelas (cuidado!)"""
-    from database.models import Base
-
     try:
+        from database.models import Base
         Base.metadata.drop_all(bind=engine)
         logger.warning("Todas as tabelas foram removidas")
         return True
@@ -131,40 +127,27 @@ def get_database_info() -> dict:
     """Retorna informações sobre o banco de dados"""
     try:
         with engine.connect() as connection:
-            if "sqlite" in settings.database_url:
-                # Informações específicas do SQLite
-                result = connection.execute(text("PRAGMA database_list"))
-                databases = result.fetchall()
+            # Informações específicas do SQLite
+            result = connection.execute(text("PRAGMA database_list"))
+            databases = result.fetchall()
 
-                result = connection.execute(
-                    text("SELECT name FROM sqlite_master WHERE type='table'"))
-                tables = [row[0] for row in result.fetchall()]
+            result = connection.execute(
+                text("SELECT name FROM sqlite_master WHERE type='table'"))
+            tables = [row[0] for row in result.fetchall()]
 
-                # Tamanho do arquivo de banco
-                db_path = settings.database_path
-                file_size = db_path.stat().st_size if (db_path and
-                                                       db_path.exists()) else 0
+            # Tamanho do arquivo de banco
+            db_path = Path("data/investment_system.db")
+            file_size = db_path.stat().st_size if db_path.exists() else 0
 
-                return {
-                    "type": "SQLite",
-                    "url": settings.database_url,
-                    "file_path": str(db_path) if db_path else None,
-                    "file_size_bytes": file_size,
-                    "file_size_mb": round(file_size / 1024 / 1024, 2),
-                    "tables": tables,
-                    "databases": [row._asdict() for row in databases]
-                    if databases else []
-                }
-            else:
-                # Para outros bancos (PostgreSQL, etc.)
-                result = connection.execute(text("SELECT version()"))
-                version = result.fetchone()[0]
-
-                return {
-                    "type": "PostgreSQL",
-                    "url": settings.database_url,
-                    "version": version
-                }
+            return {
+                "type": "SQLite",
+                "url": DATABASE_URL,
+                "file_path": str(db_path) if db_path.exists() else None,
+                "file_size_bytes": file_size,
+                "file_size_mb": round(file_size / 1024 / 1024, 2),
+                "tables": tables,
+                "databases": [row._asdict() for row in databases] if databases else []
+            }
 
     except Exception as e:
         logger.error(f"Erro ao obter informações do banco: {e}")
@@ -173,13 +156,9 @@ def get_database_info() -> dict:
 
 def vacuum_database():
     """Executa VACUUM no SQLite para otimizar o banco"""
-    if "sqlite" not in settings.database_url:
-        logger.warning("VACUUM só é suportado no SQLite")
-        return False
-
     try:
         with engine.connect() as connection:
-            connection.execute("VACUUM")
+            connection.execute(text("VACUUM"))
         logger.info("VACUUM executado com sucesso")
         return True
     except Exception as e:
@@ -191,22 +170,18 @@ def backup_database(backup_path: str = None) -> bool:
     """
     Faz backup do banco SQLite
     """
-    if "sqlite" not in settings.database_url:
-        logger.warning("Backup automático só é suportado no SQLite")
-        return False
-
     try:
         import shutil
         from datetime import datetime
 
-        db_path = settings.database_path
-        if not db_path or not db_path.exists():
+        db_path = Path("data/investment_system.db")
+        if not db_path.exists():
             logger.error("Arquivo de banco não encontrado")
             return False
 
         if not backup_path:
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            backup_path = db_path.parent / f"bkp_{db_path.stem}_{timestamp}.db"
+            backup_path = f"data/bkp_investment_system_{timestamp}.db"
 
         shutil.copy2(db_path, backup_path)
         logger.info(f"Backup criado: {backup_path}")
@@ -217,17 +192,21 @@ def backup_database(backup_path: str = None) -> bool:
         return False
 
 
-# Inicialização automática
 def init_database():
     """Inicializa o banco de dados"""
     logger.info("Inicializando banco de dados...")
+
+    # Criar diretório data se não existir
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
 
     # Verificar conexão
     if not check_database_connection():
         raise RuntimeError("Não foi possível conectar ao banco de dados")
 
     # Criar tabelas se não existirem
-    create_tables()
+    if not create_tables():
+        raise RuntimeError("Falha ao criar tabelas")
 
     # Log de informações
     db_info = get_database_info()
@@ -239,9 +218,49 @@ def init_database():
     return True
 
 
-# Executar na importação se for desenvolvimento
-if settings.is_development:
+# Funções de compatibilidade e utilitárias
+def get_settings():
+    """Função de compatibilidade para obter configurações"""
     try:
-        init_database()
-    except Exception as e:
-        logger.warning(f"Falha na inicialização automática do banco: {e}")
+        from config.settings import get_settings as _get_settings
+        return _get_settings()
+    except ImportError:
+        # Configurações básicas se settings não estiver disponível
+        class BasicSettings:
+            def __init__(self):
+                self.database_url = DATABASE_URL
+                self.database_path = Path("data/investment_system.db")
+                self.is_development = True
+        
+        return BasicSettings()
+
+
+# Executar inicialização básica na importação
+try:
+    # Verificar se diretório data existe
+    data_dir = Path("data")
+    data_dir.mkdir(exist_ok=True)
+    
+    # Verificar conexão básica
+    check_database_connection()
+    
+except Exception as e:
+    logger.warning(f"Falha na inicialização automática: {e}")
+
+
+if __name__ == "__main__":
+    # Teste básico
+    print("Testando conexão com banco de dados...")
+    if check_database_connection():
+        print("✅ Conexão OK")
+        
+        db_info = get_database_info()
+        print(f"Tipo: {db_info.get('type')}")
+        print(f"Tabelas: {len(db_info.get('tables', []))}")
+        
+        if create_tables():
+            print("✅ Tabelas criadas")
+        else:
+            print("❌ Erro ao criar tabelas")
+    else:
+        print("❌ Falha na conexão")
