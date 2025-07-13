@@ -10,7 +10,7 @@ Este módulo contém agentes especializados usando Agno Framework:
 
 # Imports condicionais para evitar erros se Agno não estiver instalado
 try:
-    from agno import Agent
+    from agno.agent import Agent
     AGNO_AVAILABLE = True
 except ImportError:
     AGNO_AVAILABLE = False

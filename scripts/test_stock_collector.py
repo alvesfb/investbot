@@ -231,7 +231,7 @@ async def test_agno_agent():
         
         # Verificar se agno está instalado
         try:
-            from agno import Agent
+            from agno.agent import Agent
         except ImportError:
             logger.warning("⚠️ Agno não está instalado - testando apenas funcionalidade básica")
             return await test_simplified_collector()
