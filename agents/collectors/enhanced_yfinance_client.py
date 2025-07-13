@@ -13,17 +13,109 @@ import pandas as pd
 from dataclasses import asdict
 
 from utils.financial_calculator import FinancialData
-from config.settings import get_settings
+try:
+    from config.settings import get_settings
+    settings = get_settings()
+    # Fallback para timeout se não existir na configuração
+    YFINANCE_TIMEOUT = getattr(settings, 'yfinance_timeout', 30)
+except (ImportError, AttributeError):
+    # Valores padrão caso não consiga carregar settings
+    YFINANCE_TIMEOUT = 30
 
 logger = logging.getLogger(__name__)
-settings = get_settings()
+
+
+class DataValidator:
+    """Validador de dados financeiros"""
+    
+    @staticmethod
+    def validate_financial_data(data: FinancialData) -> Dict[str, Any]:
+        """Valida dados financeiros e retorna relatório de qualidade"""
+        validation_report = {
+            "valid": True,
+            "warnings": [],
+            "errors": [],
+            "completeness": 0.0,
+            "quality_score": 0.0
+        }
+        
+        # Campos obrigatórios
+        required_fields = ['current_price', 'market_cap', 'revenue', 'net_income']
+        missing_required = []
+        
+        for field in required_fields:
+            value = getattr(data, field)
+            if value is None or (isinstance(value, (int, float)) and value <= 0):
+                missing_required.append(field)
+        
+        if missing_required:
+            validation_report["errors"].append(f"Campos obrigatórios ausentes: {missing_required}")
+            validation_report["valid"] = False
+        
+        # Validações de consistência
+        if data.market_cap and data.current_price and data.shares_outstanding:
+            expected_market_cap = data.current_price * data.shares_outstanding
+            difference = abs(data.market_cap - expected_market_cap) / data.market_cap
+            if difference > 0.1:  # 10% de diferença
+                validation_report["warnings"].append("Market cap inconsistente com preço × ações")
+        
+        # Calcular completude
+        all_fields = len(FinancialData.__dataclass_fields__)
+        filled_fields = sum(1 for field_name in FinancialData.__dataclass_fields__
+                           if getattr(data, field_name) is not None)
+        validation_report["completeness"] = filled_fields / all_fields
+        
+        # Score de qualidade
+        validation_report["quality_score"] = DataValidator.calculate_data_quality_score(data)
+        
+        return validation_report
+    
+    @staticmethod
+    def calculate_data_quality_score(data: FinancialData) -> float:
+        """Calcula score de qualidade dos dados (0-100)"""
+        score = 0
+        max_score = 0
+        
+        # Dados básicos (peso 40%)
+        basic_fields = ['current_price', 'market_cap', 'revenue', 'net_income']
+        basic_score = sum(1 for field in basic_fields 
+                         if getattr(data, field) is not None) / len(basic_fields)
+        score += basic_score * 40
+        max_score += 40
+        
+        # Dados de balanço (peso 30%)
+        balance_fields = ['total_assets', 'shareholders_equity', 'total_debt']
+        balance_score = sum(1 for field in balance_fields 
+                           if getattr(data, field) is not None) / len(balance_fields)
+        score += balance_score * 30
+        max_score += 30
+        
+        # Dados históricos (peso 20%)
+        history_score = 0
+        if data.revenue_history and len(data.revenue_history) >= 3:
+            history_score += 0.5
+        if data.net_income_history and len(data.net_income_history) >= 3:
+            history_score += 0.5
+        score += history_score * 20
+        max_score += 20
+        
+        # Metadados (peso 10%)
+        meta_score = 0
+        if data.sector:
+            meta_score += 0.5
+        if data.last_updated and (datetime.now() - data.last_updated).days < 7:
+            meta_score += 0.5
+        score += meta_score * 10
+        max_score += 10
+        
+        return (score / max_score) * 100 if max_score > 0 else 0
 
 
 class EnhancedYFinanceClient:
     """Cliente YFinance expandido com dados fundamentalistas"""
     
     def __init__(self):
-        self.timeout = settings.yfinance_timeout
+        self.timeout = YFINANCE_TIMEOUT
         self.session = None
         self.cache = {}
         self.cache_ttl = 3600  # 1 hora
@@ -73,249 +165,26 @@ class EnhancedYFinanceClient:
             hist_prices = ticker.history(period="1d")
             
             # Coletar demonstrações financeiras
-            financials = await self._get_financial_statements(ticker)
-            balance_sheet = await self._get_balance_sheet(ticker)
-            cash_flow = await self._get_cash_flow(ticker)
+            financials = self._get_financial_statements(ticker)
             
-            # Coletar dados históricos de crescimento
-            historical_data = await self._get_historical_growth_data(ticker)
+            # Coletar dados históricos para crescimento
+            historical_data = self._get_historical_fundamentals(ticker)
             
-            # Construir FinancialData
+            # Construir objeto FinancialData
             financial_data = self._build_financial_data(
-                info, hist_prices, financials, balance_sheet, 
-                cash_flow, historical_data, symbol
+                symbol, info, hist_prices, financials, historical_data
             )
             
-            # Cachear resultado
+            # Cache dos dados
             self._cache_data(cache_key, financial_data)
             
-            logger.info(f"Dados coletados com sucesso para {symbol}")
             return financial_data
             
         except Exception as e:
             logger.error(f"Erro ao coletar dados para {symbol}: {e}")
-            # Retornar estrutura vazia em caso de erro
-            return FinancialData()
+            return self._create_empty_financial_data(symbol)
     
-    async def _get_financial_statements(self, ticker: yf.Ticker) -> Optional[pd.DataFrame]:
-        """Coleta demonstrações financeiras (DRE)"""
-        try:
-            financials = ticker.financials
-            return financials if not financials.empty else None
-        except Exception as e:
-            logger.warning(f"Erro ao coletar DRE: {e}")
-            return None
-    
-    async def _get_balance_sheet(self, ticker: yf.Ticker) -> Optional[pd.DataFrame]:
-        """Coleta balanço patrimonial"""
-        try:
-            balance = ticker.balance_sheet
-            return balance if not balance.empty else None
-        except Exception as e:
-            logger.warning(f"Erro ao coletar balanço: {e}")
-            return None
-    
-    async def _get_cash_flow(self, ticker: yf.Ticker) -> Optional[pd.DataFrame]:
-        """Coleta demonstração de fluxo de caixa"""
-        try:
-            cash_flow = ticker.cashflow
-            return cash_flow if not cash_flow.empty else None
-        except Exception as e:
-            logger.warning(f"Erro ao coletar fluxo de caixa: {e}")
-            return None
-    
-    async def _get_historical_growth_data(self, ticker: yf.Ticker) -> Dict[str, List[float]]:
-        """Coleta dados históricos para cálculo de crescimento"""
-        historical_data = {
-            "revenue": [],
-            "net_income": [],
-            "roe": []
-        }
-        
-        try:
-            # Tentar obter dados dos últimos 5 anos
-            financials = ticker.financials
-            balance = ticker.balance_sheet
-            
-            if not financials.empty and not balance.empty:
-                # Ordenar por data (mais recente primeiro)
-                financials = financials.sort_index(axis=1, ascending=False)
-                balance = balance.sort_index(axis=1, ascending=False)
-                
-                # Extrair receita dos últimos anos
-                for col in financials.columns:
-                    try:
-                        # Revenue (Total Revenue ou Total Revenue)
-                        revenue = None
-                        for revenue_key in ['Total Revenue', 'Total Operating Revenue', 'Revenue']:
-                            if revenue_key in financials.index:
-                                revenue = financials.loc[revenue_key, col]
-                                break
-                        
-                        if revenue and pd.notna(revenue) and revenue > 0:
-                            historical_data["revenue"].append(float(revenue))
-                        
-                        # Net Income
-                        net_income = None
-                        for income_key in ['Net Income', 'Net Income Common Stockholders']:
-                            if income_key in financials.index:
-                                net_income = financials.loc[income_key, col]
-                                break
-                        
-                        if net_income and pd.notna(net_income):
-                            historical_data["net_income"].append(float(net_income))
-                        
-                        # ROE (calcular se tiver net income e equity)
-                        if net_income and pd.notna(net_income) and col in balance.columns:
-                            equity = None
-                            for equity_key in ['Total Stockholder Equity', 'Stockholders Equity', 'Total Equity']:
-                                if equity_key in balance.index:
-                                    equity = balance.loc[equity_key, col]
-                                    break
-                            
-                            if equity and pd.notna(equity) and equity > 0:
-                                roe = (float(net_income) / float(equity)) * 100
-                                historical_data["roe"].append(roe)
-                                
-                    except Exception as e:
-                        logger.debug(f"Erro ao processar dados históricos da coluna {col}: {e}")
-                        continue
-                
-                # Limitar a 5 anos e reverter ordem (mais antigo primeiro)
-                for key in historical_data:
-                    historical_data[key] = list(reversed(historical_data[key][-5:]))
-                    
-        except Exception as e:
-            logger.warning(f"Erro ao coletar dados históricos: {e}")
-        
-        return historical_data
-    
-    def _build_financial_data(self, info: Dict[str, Any], hist_prices: pd.DataFrame,
-                            financials: Optional[pd.DataFrame], balance: Optional[pd.DataFrame],
-                            cash_flow: Optional[pd.DataFrame], historical_data: Dict[str, List[float]],
-                            symbol: str) -> FinancialData:
-        """Constrói estrutura FinancialData a partir dos dados coletados"""
-        
-        data = FinancialData()
-        
-        try:
-            # Dados básicos de mercado
-            data.market_cap = self._safe_get(info, 'marketCap')
-            data.enterprise_value = self._safe_get(info, 'enterpriseValue')
-            data.shares_outstanding = self._safe_get(info, 'sharesOutstanding')
-            
-            # Preço atual
-            if not hist_prices.empty:
-                data.current_price = float(hist_prices['Close'].iloc[-1])
-            else:
-                data.current_price = self._safe_get(info, 'regularMarketPrice')
-            
-            # Dados do balanço patrimonial
-            if balance is not None and not balance.empty:
-                latest_balance = balance.iloc[:, 0]  # Coluna mais recente
-                
-                data.total_assets = self._safe_get_from_series(latest_balance, 
-                    ['Total Assets', 'Total Asset'])
-                
-                data.total_equity = self._safe_get_from_series(latest_balance,
-                    ['Total Stockholder Equity', 'Stockholders Equity', 'Total Equity'])
-                
-                data.total_debt = self._safe_get_from_series(latest_balance,
-                    ['Total Debt', 'Long Term Debt', 'Short Long Term Debt'])
-                
-                data.current_assets = self._safe_get_from_series(latest_balance,
-                    ['Current Assets', 'Total Current Assets'])
-                
-                data.current_liabilities = self._safe_get_from_series(latest_balance,
-                    ['Current Liabilities', 'Total Current Liabilities'])
-                
-                data.cash_and_equivalents = self._safe_get_from_series(latest_balance,
-                    ['Cash And Cash Equivalents', 'Cash', 'Cash And Short Term Investments'])
-            
-            # Dados da DRE
-            if financials is not None and not financials.empty:
-                latest_financials = financials.iloc[:, 0]  # Coluna mais recente
-                
-                data.revenue = self._safe_get_from_series(latest_financials,
-                    ['Total Revenue', 'Total Operating Revenue', 'Revenue'])
-                
-                data.gross_profit = self._safe_get_from_series(latest_financials,
-                    ['Gross Profit', 'Total Gross Profit'])
-                
-                data.operating_income = self._safe_get_from_series(latest_financials,
-                    ['Operating Income', 'Total Operating Income'])
-                
-                data.ebitda = self._safe_get_from_series(latest_financials,
-                    ['EBITDA', 'Normalized EBITDA'])
-                
-                data.net_income = self._safe_get_from_series(latest_financials,
-                    ['Net Income', 'Net Income Common Stockholders'])
-            
-            # Dados históricos
-            data.historical_revenue = historical_data.get("revenue", []) or None
-            data.historical_net_income = historical_data.get("net_income", []) or None
-            data.historical_roe = historical_data.get("roe", []) or None
-            
-            # Metadados
-            data.currency = self._safe_get(info, 'currency', 'BRL')
-            data.last_updated = datetime.now()
-            
-            # Se não conseguiu dados das demonstrações, tentar do info
-            if not data.revenue:
-                data.revenue = self._safe_get(info, 'totalRevenue')
-            
-            if not data.total_debt:
-                data.total_debt = self._safe_get(info, 'totalDebt')
-            
-            if not data.total_assets:
-                data.total_assets = self._safe_get(info, 'totalAssets')
-            
-            logger.debug(f"FinancialData construído para {symbol}")
-            
-        except Exception as e:
-            logger.error(f"Erro ao construir FinancialData: {e}")
-        
-        return data
-    
-    def _safe_get(self, data: Dict[str, Any], key: str, default: Any = None) -> Any:
-        """Extrai valor de forma segura de um dicionário"""
-        try:
-            value = data.get(key, default)
-            if value is not None and pd.notna(value):
-                return float(value) if isinstance(value, (int, float)) else value
-        except (ValueError, TypeError):
-            pass
-        return default
-    
-    def _safe_get_from_series(self, series: pd.Series, keys: List[str]) -> Optional[float]:
-        """Extrai valor de forma segura de uma Series pandas"""
-        for key in keys:
-            if key in series.index:
-                value = series[key]
-                if pd.notna(value):
-                    try:
-                        return float(value)
-                    except (ValueError, TypeError):
-                        continue
-        return None
-    
-    def _is_cached(self, key: str) -> bool:
-        """Verifica se dados estão em cache e são válidos"""
-        if key not in self.cache:
-            return False
-        
-        cached_time = self.cache[key]['timestamp']
-        return (datetime.now() - cached_time).total_seconds() < self.cache_ttl
-    
-    def _cache_data(self, key: str, data: Any):
-        """Armazena dados no cache"""
-        self.cache[key] = {
-            'data': data,
-            'timestamp': datetime.now()
-        }
-    
-    async def get_batch_stock_data(self, symbols: List[str], 
-                                 max_concurrent: int = 5) -> Dict[str, FinancialData]:
+    async def get_batch_stock_data(self, symbols: List[str], max_concurrent: int = 5) -> Dict[str, FinancialData]:
         """
         Coleta dados de múltiplas ações em paralelo
         
@@ -326,206 +195,314 @@ class EnhancedYFinanceClient:
         Returns:
             Dict com dados de cada ação
         """
-        results = {}
         semaphore = asyncio.Semaphore(max_concurrent)
         
-        async def fetch_single(symbol: str):
+        async def fetch_single(symbol: str) -> Tuple[str, FinancialData]:
             async with semaphore:
-                try:
-                    data = await self.get_comprehensive_stock_data(symbol)
-                    results[symbol] = data
-                except Exception as e:
-                    logger.error(f"Erro ao coletar {symbol}: {e}")
-                    results[symbol] = FinancialData()
+                data = await self.get_comprehensive_stock_data(symbol)
+                return symbol, data
         
-        # Executar em lotes
         tasks = [fetch_single(symbol) for symbol in symbols]
-        await asyncio.gather(*tasks, return_exceptions=True)
+        results = await asyncio.gather(*tasks, return_exceptions=True)
         
-        return results
+        batch_data = {}
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error(f"Erro na coleta em lote: {result}")
+                continue
+            symbol, data = result
+            batch_data[symbol] = data
+        
+        return batch_data
     
-    async def get_sector_data(self, sector_symbols: Dict[str, List[str]]) -> Dict[str, Dict[str, FinancialData]]:
+    async def get_sector_data(self, sector_symbols: List[str]) -> Dict[str, Any]:
         """
-        Coleta dados organizados por setor
+        Coleta dados setoriais para benchmarking
         
         Args:
-            sector_symbols: Dict {setor: [códigos]}
+            sector_symbols: Lista de símbolos do setor
             
         Returns:
-            Dict {setor: {código: FinancialData}}
+            Estatísticas agregadas do setor
         """
-        results = {}
+        sector_data = await self.get_batch_stock_data(sector_symbols)
         
-        for sector, symbols in sector_symbols.items():
-            logger.info(f"Coletando dados do setor {sector}: {len(symbols)} ações")
-            sector_data = await self.get_batch_stock_data(symbols)
-            results[sector] = sector_data
+        # Calcular métricas agregadas
+        sector_metrics = self._calculate_sector_metrics(sector_data)
         
-        return results
+        return sector_metrics
+    
+    def _get_financial_statements(self, ticker) -> Dict[str, pd.DataFrame]:
+        """Coleta demonstrações financeiras"""
+        try:
+            statements = {
+                'income_statement': ticker.financials,
+                'balance_sheet': ticker.balance_sheet,
+                'cash_flow': ticker.cashflow
+            }
+            
+            # Verificar se dados foram coletados
+            for name, df in statements.items():
+                if df.empty:
+                    logger.warning(f"Demonstração {name} vazia")
+            
+            return statements
+            
+        except Exception as e:
+            logger.warning(f"Erro ao coletar demonstrações financeiras: {e}")
+            return {
+                'income_statement': pd.DataFrame(),
+                'balance_sheet': pd.DataFrame(),
+                'cash_flow': pd.DataFrame()
+            }
+    
+    def _get_historical_fundamentals(self, ticker) -> Dict[str, List[float]]:
+        """Coleta dados históricos fundamentais"""
+        try:
+            historical = {
+                'revenue_history': [],
+                'net_income_history': []
+            }
+            
+            # Tentar coletar dados dos últimos 5 anos
+            financials = ticker.financials
+            if not financials.empty:
+                # Revenue (Total Revenue ou Operating Revenue)
+                revenue_keys = ['Total Revenue', 'Operating Revenue', 'Revenue']
+                for key in revenue_keys:
+                    if key in financials.index:
+                        revenue_data = financials.loc[key].dropna()
+                        historical['revenue_history'] = revenue_data.tolist()[:5]
+                        break
+                
+                # Net Income
+                income_keys = ['Net Income', 'Net Income Common Stockholders']
+                for key in income_keys:
+                    if key in financials.index:
+                        income_data = financials.loc[key].dropna()
+                        historical['net_income_history'] = income_data.tolist()[:5]
+                        break
+            
+            return historical
+            
+        except Exception as e:
+            logger.warning(f"Erro ao coletar dados históricos: {e}")
+            return {'revenue_history': [], 'net_income_history': []}
+    
+    def _build_financial_data(self, symbol: str, info: Dict, hist_prices: pd.DataFrame, 
+                             financials: Dict[str, pd.DataFrame], 
+                             historical: Dict[str, List[float]]) -> FinancialData:
+        """Constrói objeto FinancialData a partir dos dados coletados"""
+        
+        # Dados básicos do info
+        current_price = info.get('currentPrice') or info.get('regularMarketPrice')
+        if current_price is None and not hist_prices.empty:
+            current_price = hist_prices['Close'].iloc[-1]
+        
+        # Extrair dados das demonstrações
+        balance_sheet = financials.get('balance_sheet', pd.DataFrame())
+        income_statement = financials.get('income_statement', pd.DataFrame())
+        
+        # Construir FinancialData
+        financial_data = FinancialData(
+            # Dados básicos
+            current_price=current_price,
+            market_cap=info.get('marketCap'),
+            shares_outstanding=info.get('sharesOutstanding'),
+            
+            # Demonstrativo de Resultados
+            revenue=self._extract_financial_value(income_statement, ['Total Revenue', 'Revenue']),
+            gross_profit=self._extract_financial_value(income_statement, ['Gross Profit']),
+            operating_income=self._extract_financial_value(income_statement, ['Operating Income']),
+            ebitda=self._extract_financial_value(income_statement, ['EBITDA']),
+            net_income=self._extract_financial_value(income_statement, ['Net Income']),
+            
+            # Balanço Patrimonial
+            total_assets=self._extract_financial_value(balance_sheet, ['Total Assets']),
+            current_assets=self._extract_financial_value(balance_sheet, ['Current Assets']),
+            cash_and_equivalents=self._extract_financial_value(balance_sheet, ['Cash And Cash Equivalents']),
+            total_debt=self._extract_financial_value(balance_sheet, ['Total Debt']),
+            current_liabilities=self._extract_financial_value(balance_sheet, ['Current Liabilities']),
+            shareholders_equity=self._extract_financial_value(balance_sheet, ['Stockholders Equity']),
+            
+            # Dados históricos
+            revenue_history=historical.get('revenue_history', []),
+            net_income_history=historical.get('net_income_history', []),
+            
+            # Metadados
+            sector=info.get('sector'),
+            industry=info.get('industry'),
+            last_updated=datetime.now()
+        )
+        
+        return financial_data
+    
+    def _extract_financial_value(self, df: pd.DataFrame, keys: List[str]) -> Optional[float]:
+        """Extrai valor financeiro do DataFrame"""
+        if df.empty:
+            return None
+            
+        for key in keys:
+            if key in df.index:
+                values = df.loc[key].dropna()
+                if not values.empty:
+                    return float(values.iloc[0])  # Valor mais recente
+        
+        return None
+    
+    def _calculate_sector_metrics(self, sector_data: Dict[str, FinancialData]) -> Dict[str, Any]:
+        """Calcula métricas agregadas do setor"""
+        from utils.financial_calculator import FinancialCalculator
+        
+        calculator = FinancialCalculator()
+        all_metrics = []
+        
+        # Calcular métricas para cada empresa
+        for symbol, data in sector_data.items():
+            if data.market_cap:  # Só processar se tiver dados válidos
+                metrics = calculator.calculate_all_metrics(data)
+                all_metrics.append(metrics)
+        
+        if not all_metrics:
+            return {}
+        
+        # Calcular estatísticas agregadas
+        sector_stats = {
+            'companies_count': len(all_metrics),
+            'median_pe': self._calculate_median([m.pe_ratio for m in all_metrics if m.pe_ratio]),
+            'median_pb': self._calculate_median([m.pb_ratio for m in all_metrics if m.pb_ratio]),
+            'median_roe': self._calculate_median([m.roe for m in all_metrics if m.roe]),
+            'median_debt_to_equity': self._calculate_median([m.debt_to_equity for m in all_metrics if m.debt_to_equity]),
+            'avg_revenue_growth': self._calculate_average([m.revenue_growth_1y for m in all_metrics if m.revenue_growth_1y])
+        }
+        
+        return sector_stats
+    
+    def _calculate_median(self, values: List[float]) -> Optional[float]:
+        """Calcula mediana de lista de valores"""
+        if not values:
+            return None
+        values.sort()
+        n = len(values)
+        if n % 2 == 0:
+            return (values[n//2 - 1] + values[n//2]) / 2
+        return values[n//2]
+    
+    def _calculate_average(self, values: List[float]) -> Optional[float]:
+        """Calcula média de lista de valores"""
+        if not values:
+            return None
+        return sum(values) / len(values)
+    
+    def _is_cached(self, key: str) -> bool:
+        """Verifica se dados estão em cache e são válidos"""
+        if key not in self.cache:
+            return False
+        
+        cached_time = self.cache[key]['timestamp']
+        return (datetime.now() - cached_time).seconds < self.cache_ttl
+    
+    def _cache_data(self, key: str, data: FinancialData):
+        """Armazena dados no cache"""
+        self.cache[key] = {
+            'data': data,
+            'timestamp': datetime.now()
+        }
+    
+    def _create_empty_financial_data(self, symbol: str) -> FinancialData:
+        """Cria FinancialData vazio em caso de erro"""
+        return FinancialData(
+            sector="Desconhecido",
+            last_updated=datetime.now(),
+            data_quality_score=0.0
+        )
     
     def clear_cache(self):
-        """Limpa o cache de dados"""
+        """Limpa cache de dados"""
         self.cache.clear()
         logger.info("Cache limpo")
     
     def get_cache_stats(self) -> Dict[str, Any]:
         """Retorna estatísticas do cache"""
-        now = datetime.now()
-        valid_entries = 0
-        expired_entries = 0
-        
-        for entry in self.cache.values():
-            age = (now - entry['timestamp']).total_seconds()
-            if age < self.cache_ttl:
-                valid_entries += 1
-            else:
-                expired_entries += 1
-        
         return {
-            "total_entries": len(self.cache),
-            "valid_entries": valid_entries,
-            "expired_entries": expired_entries,
-            "cache_ttl_seconds": self.cache_ttl
+            'entries': len(self.cache),
+            'oldest_entry': min([v['timestamp'] for v in self.cache.values()]) if self.cache else None,
+            'newest_entry': max([v['timestamp'] for v in self.cache.values()]) if self.cache else None
         }
 
 
-class FallbackDataProvider:
-    """Provedor de dados de fallback quando YFinance falha"""
+class BatchDataProcessor:
+    """Processador de dados em lote com retry e rate limiting"""
     
-    def __init__(self):
-        self.alpha_vantage_key = settings.alpha_vantage_api_key
+    def __init__(self, client: EnhancedYFinanceClient):
+        self.client = client
+        self.max_retries = 3
+        self.retry_delay = 1.0
+        
+    async def process_symbol_list(self, symbols: List[str], 
+                                 batch_size: int = 10) -> Dict[str, FinancialData]:
+        """Processa lista de símbolos em lotes"""
+        results = {}
+        
+        # Dividir em lotes
+        for i in range(0, len(symbols), batch_size):
+            batch = symbols[i:i + batch_size]
+            logger.info(f"Processando lote {i//batch_size + 1}: {batch}")
+            
+            # Processar lote com retry
+            batch_results = await self._process_batch_with_retry(batch)
+            results.update(batch_results)
+            
+            # Delay entre lotes para evitar rate limiting
+            if i + batch_size < len(symbols):
+                await asyncio.sleep(1.0)
+        
+        return results
     
-    async def get_basic_data(self, symbol: str) -> Optional[FinancialData]:
-        """Coleta dados básicos via fonte alternativa"""
-        try:
-            if not self.alpha_vantage_key:
-                logger.warning("Alpha Vantage API key não configurada")
-                return None
-            
-            # Implementar coleta via Alpha Vantage
-            # Por enquanto, retorna None
-            logger.info(f"Fallback não implementado para {symbol}")
-            return None
-            
-        except Exception as e:
-            logger.error(f"Erro no fallback para {symbol}: {e}")
-            return None
+    async def _process_batch_with_retry(self, symbols: List[str]) -> Dict[str, FinancialData]:
+        """Processa lote com retry automático"""
+        for attempt in range(self.max_retries):
+            try:
+                return await self.client.get_batch_stock_data(symbols)
+            except Exception as e:
+                logger.warning(f"Tentativa {attempt + 1} falhou: {e}")
+                if attempt < self.max_retries - 1:
+                    await asyncio.sleep(self.retry_delay * (attempt + 1))
+                else:
+                    logger.error(f"Todas as tentativas falharam para lote: {symbols}")
+                    return {}
 
 
-class DataValidator:
-    """Validador de dados financeiros coletados"""
-    
-    @staticmethod
-    def validate_financial_data(data: FinancialData) -> Dict[str, List[str]]:
-        """
-        Valida dados financeiros coletados
-        
-        Returns:
-            Dict com warnings e errors
-        """
-        warnings = []
-        errors = []
-        
-        try:
-            # Validar dados básicos
-            if not data.current_price or data.current_price <= 0:
-                errors.append("Preço atual inválido ou ausente")
-            
-            if data.market_cap and data.market_cap <= 0:
-                warnings.append("Market cap inválido")
-            
-            # Validar consistência
-            if (data.total_assets and data.total_equity and 
-                data.total_assets < data.total_equity):
-                warnings.append("Ativo total menor que patrimônio líquido")
-            
-            if (data.current_assets and data.current_liabilities and
-                data.current_assets < 0):
-                errors.append("Ativo circulante negativo")
-            
-            # Validar dados históricos
-            if data.historical_revenue:
-                if any(r < 0 for r in data.historical_revenue if r is not None):
-                    warnings.append("Receita histórica com valores negativos")
-            
-            # Validar completude
-            required_fields = ['current_price', 'market_cap', 'revenue']
-            missing_fields = [f for f in required_fields if not getattr(data, f)]
-            
-            if missing_fields:
-                warnings.append(f"Campos importantes ausentes: {missing_fields}")
-            
-        except Exception as e:
-            errors.append(f"Erro na validação: {e}")
-        
-        return {"warnings": warnings, "errors": errors}
-    
-    @staticmethod
-    def calculate_data_quality_score(data: FinancialData) -> float:
-        """
-        Calcula score de qualidade dos dados (0-100)
-        
-        Returns:
-            Score de qualidade
-        """
-        total_fields = 0
-        filled_fields = 0
-        important_fields = 0
-        important_filled = 0
-        
-        # Campos importantes (peso maior)
-        important_field_names = [
-            'current_price', 'market_cap', 'revenue', 'net_income',
-            'total_assets', 'total_equity'
-        ]
-        
-        for field_name, field_value in asdict(data).items():
-            if field_name not in ['currency', 'reporting_period', 'last_updated']:
-                total_fields += 1
-                if field_value is not None:
-                    filled_fields += 1
-                
-                if field_name in important_field_names:
-                    important_fields += 1
-                    if field_value is not None:
-                        important_filled += 1
-        
-        # Score baseado em campos preenchidos (peso 70%) e campos importantes (peso 30%)
-        general_score = (filled_fields / total_fields) * 70 if total_fields > 0 else 0
-        important_score = (important_filled / important_fields) * 30 if important_fields > 0 else 0
-        
-        return general_score + important_score
-
-
-# Exemplo de uso
-async def main():
-    """Exemplo de uso do cliente expandido"""
-    client = EnhancedYFinanceClient()
-    
-    try:
-        # Teste com uma ação
-        data = await client.get_comprehensive_stock_data("PETR4")
-        
-        print(f"Dados coletados para PETR4:")
-        print(f"Preço atual: R$ {data.current_price}")
-        print(f"Market Cap: R$ {data.market_cap:,.0f}" if data.market_cap else "Market Cap: N/A")
-        print(f"Receita: R$ {data.revenue:,.0f}" if data.revenue else "Receita: N/A")
-        print(f"Lucro Líquido: R$ {data.net_income:,.0f}" if data.net_income else "Lucro: N/A")
-        print(f"Receitas históricas: {len(data.historical_revenue or [])} períodos")
-        
-        # Validar dados
+# Funções utilitárias
+async def validate_and_collect_stock_data(symbol: str) -> Tuple[FinancialData, Dict[str, Any]]:
+    """Coleta dados de ação com validação automática"""
+    async with EnhancedYFinanceClient() as client:
+        data = await client.get_comprehensive_stock_data(symbol)
         validation = DataValidator.validate_financial_data(data)
-        if validation["warnings"]:
-            print(f"Avisos: {validation['warnings']}")
-        if validation["errors"]:
-            print(f"Erros: {validation['errors']}")
-        
-        quality_score = DataValidator.calculate_data_quality_score(data)
-        print(f"Qualidade dos dados: {quality_score:.1f}%")
-        
-    except Exception as e:
-        print(f"Erro: {e}")
+        return data, validation
+
+
+async def collect_sector_benchmark(sector_symbols: List[str]) -> Dict[str, Any]:
+    """Coleta benchmark setorial"""
+    async with EnhancedYFinanceClient() as client:
+        return await client.get_sector_data(sector_symbols)
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Exemplo de uso
+    async def test_client():
+        async with EnhancedYFinanceClient() as client:
+            # Teste individual
+            data = await client.get_comprehensive_stock_data("PETR4")
+            validation = DataValidator.validate_financial_data(data)
+            
+            print(f"Dados coletados para PETR4:")
+            print(f"Market Cap: {data.market_cap}")
+            print(f"Qualidade: {validation['quality_score']:.1f}")
+            
+            # Teste em lote
+            batch_data = await client.get_batch_stock_data(["PETR4", "VALE3", "ITUB4"])
+            print(f"\nLote processado: {len(batch_data)} ações")
+    
+    # Executar teste
+    asyncio.run(test_client())
