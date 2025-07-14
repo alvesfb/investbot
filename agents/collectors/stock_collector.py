@@ -10,7 +10,7 @@ from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
 
 from agno.agent import Agent
-from agno.agent.tools import Tool
+from agno.tools import Tool
 import httpx
 
 from config.settings import get_settings, get_agent_settings

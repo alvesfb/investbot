@@ -157,70 +157,61 @@ class SectorBenchmarks:
 
     @classmethod
     def get_default_benchmarks(cls) -> Dict[str, 'SectorBenchmarks']:
-        """Retorna benchmarks padrão por setor - CORRIGIDOS COMPLETAMENTE"""
+        """Retorna benchmarks padrão por setor"""
         return {
             'Bancos': cls(
                 sector='Bancos',
-                pe_ratio_median=8.0,     # Bancos: P/L baixo (8-12x típico)
-                pb_ratio_median=0.8,     # P/VP baixo (0.6-1.2x típico)
-                roe_median=23.0,         # CORRIGIDO: ROE alto devido alavancagem (>20% E > Tech)
-                net_margin_median=28.0,  # Margem alta em produtos financeiros
-                revenue_growth_median=8.0,   # Crescimento moderado
-                debt_to_equity_median=8.0    # Alta alavancagem é normal
+                pe_ratio_median=12.0,
+                pb_ratio_median=1.5,
+                roe_median=23.0,
+                net_margin_median=25.0,
+                revenue_growth_median=8.0,
+                debt_to_equity_median=5.0
             ),
             'Tecnologia': cls(
                 sector='Tecnologia',
-                pe_ratio_median=30.0,    # CORRIGIDO: Tech P/L alto (>25x)
-                pb_ratio_median=4.0,     # P/VP alto (3-6x típico)
-                roe_median=18.0,         # ROE bom mas menor que bancos
-                net_margin_median=15.0,  # Margem boa mas menor que bancos
-                revenue_growth_median=25.0,  # Crescimento alto
-                debt_to_equity_median=0.1    # Baixo endividamento
+                pe_ratio_median=30.0,
+                pb_ratio_median=3.0,
+                roe_median=18.0,
+                net_margin_median=15.0,
+                revenue_growth_median=25.0,
+                debt_to_equity_median=0.2
             ),
             'Petróleo e Gás': cls(
                 sector='Petróleo e Gás',
-                pe_ratio_median=5.0,     # CORRIGIDO: Commodities P/L muito baixo (<10x)
-                pb_ratio_median=0.7,     # P/VP baixo (ativos pesados)
-                roe_median=12.0,         # ROE cíclico, moderado
-                net_margin_median=8.0,   # Margem baixa (commodity)
-                revenue_growth_median=3.0,   # Crescimento baixo/cíclico
-                debt_to_equity_median=0.6    # Endividamento moderado
+                pe_ratio_median=5.0,
+                pb_ratio_median=1.0,
+                roe_median=12.0,
+                net_margin_median=8.0,
+                revenue_growth_median=5.0,
+                debt_to_equity_median=0.8
             ),
             'Varejo': cls(
                 sector='Varejo',
-                pe_ratio_median=15.0,    # P/L médio
-                pb_ratio_median=2.0,     # P/VP médio
-                roe_median=16.0,         # ROE bom (giro rápido)
-                net_margin_median=4.0,   # Margem baixa (competição)
-                revenue_growth_median=10.0,  # Crescimento médio
-                debt_to_equity_median=0.8    # Endividamento moderado
+                pe_ratio_median=18.0,
+                pb_ratio_median=2.5,
+                roe_median=16.0,
+                net_margin_median=5.0,
+                revenue_growth_median=12.0,
+                debt_to_equity_median=0.6
             ),
             'Utilities': cls(
                 sector='Utilities',
-                pe_ratio_median=12.0,    # P/L baixo-médio (defensivo)
-                pb_ratio_median=1.2,     # P/VP baixo (ativos regulados)
-                roe_median=14.0,         # ROE regulado, estável
-                net_margin_median=12.0,  # Margem regulada, estável
-                revenue_growth_median=4.0,   # Crescimento baixo (regulado)
-                debt_to_equity_median=1.5    # Endividamento alto (capex)
-            ),
-            'Mineração': cls(
-                sector='Mineração',
-                pe_ratio_median=7.0,     # P/L baixo (cíclico)
-                pb_ratio_median=0.9,     # P/VP baixo (ativos pesados)
-                roe_median=15.0,         # ROE cíclico
-                net_margin_median=12.0,  # Margem boa em ciclo alto
-                revenue_growth_median=5.0,   # Crescimento cíclico
-                debt_to_equity_median=0.4    # Endividamento controlado
+                pe_ratio_median=14.0,
+                pb_ratio_median=1.8,
+                roe_median=12.0,
+                net_margin_median=12.0,
+                revenue_growth_median=5.0,
+                debt_to_equity_median=1.2
             ),
             'Geral': cls(
                 sector='Geral',
-                pe_ratio_median=15.0,    # Média ponderada
-                pb_ratio_median=2.0,     # Média ponderada
-                roe_median=15.0,         # Média ponderada
-                net_margin_median=10.0,  # Média ponderada
-                revenue_growth_median=8.0,   # Média ponderada
-                debt_to_equity_median=0.8    # Média ponderada
+                pe_ratio_median=15.0,
+                pb_ratio_median=2.0,
+                roe_median=15.0,
+                net_margin_median=10.0,
+                revenue_growth_median=10.0,
+                debt_to_equity_median=0.5
             )
         }
 
@@ -877,3 +868,4 @@ if __name__ == "__main__":
         print("⚠️ FinancialCalculator não disponível para teste completo")
         print("✅ Estrutura do Scoring Engine implementada")
         print("💡 Execute com utils.financial_calculator disponível para teste completo")
+        
