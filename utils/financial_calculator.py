@@ -11,6 +11,27 @@ from enum import Enum
 
 logger = logging.getLogger(__name__)
 
+def safe_float(value, default=0.0):
+    """Converte para float de forma segura"""
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+def safe_subtract(a, b, default=0.0):
+    """Subtração segura lidando com None"""
+    val_a = safe_float(a, default)
+    val_b = safe_float(b, default)
+    return val_a - val_b
+
+def safe_divide(a, b, default=0.0):
+    """Divisão segura lidando com None e zero"""
+    val_a = safe_float(a, default)
+    val_b = safe_float(b, 1.0)
+    return val_a / val_b if val_b != 0 else default
+
 
 class MetricCategory(Enum):
     """Categorias de métricas financeiras"""
@@ -112,6 +133,8 @@ class FinancialCalculator:
     """Calculadora principal de métricas financeiras"""
     
     def __init__(self):
+        import logging
+        self.logger = logging.getLogger(__name__)
         self.sector_benchmarks = self._load_sector_benchmarks()
         
     def calculate_all_metrics(self, data: FinancialData, reasoning_agent=None) -> FinancialMetrics:
@@ -161,14 +184,13 @@ class FinancialCalculator:
         """Calcula métricas de valuation"""
         try:
             # P/L Ratio
-            if data.current_price and data.net_income and data.shares_outstanding:
-                eps = data.net_income / data.shares_outstanding
-                if eps > 0:
-                    metrics.pe_ratio = data.current_price / eps
+            if data.market_cap and data.net_income and data.net_income > 0:
+                metrics.pe_ratio = data.market_cap / data.net_income
+                self.logger.info(f"P/L calculado: {metrics.pe_ratio:.2f}")
             
             # P/VP Ratio
             if data.market_cap and data.shareholders_equity and data.shareholders_equity > 0:
-                metrics.pb_ratio = data.market_cap / data.shareholders_equity
+                safe_subtract(metrics.pb_ratio, safe_divide(data.market_cap, data.shareholders_equity))
             
             # P/S Ratio
             if data.market_cap and data.revenue and data.revenue > 0:
@@ -290,13 +312,13 @@ class FinancialCalculator:
         """Calcula taxa de crescimento simples"""
         if previous == 0:
             return 0.0
-        return ((current - previous) / abs(previous)) * 100
+        return (safe_divide(safe_subtract(current,previous),abs(previous))) * 100
     
     def _calculate_cagr(self, initial: float, final: float, years: int) -> float:
         """Calcula Compound Annual Growth Rate (CAGR)"""
         if initial <= 0 or years <= 0:
             return 0.0
-        return (((final / initial) ** (1/years)) - 1) * 100
+        return ((safe_divide(final,initial) ** safe_subtract(safe_divide(1,years),1))) * 100
     
     def _validate_data_quality(self, data: FinancialData) -> float:
         """Valida a qualidade dos dados e retorna score 0-100"""
@@ -308,7 +330,7 @@ class FinancialCalculator:
         available_fields = sum(1 for field in required_fields 
                              if getattr(data, field) is not None)
         
-        return (available_fields / len(required_fields)) * 100
+        return (safe_divide(available_fields,len(required_fields))) * 100
     
     def _calculate_category_scores(self, metrics: FinancialMetrics, sector: Optional[str]):
         """Calcula scores por categoria baseado em benchmarks setoriais"""
@@ -523,11 +545,15 @@ class FinancialCalculator:
     
     def _calculate_overall_score(self, metrics: FinancialMetrics) -> float:
         """Calcula score geral ponderado"""
+        if not metrics.category_scores:
+            return 50.0
+        
+        # Pesos das categorias
         weights = {
             'valuation': 0.25,
-            'profitability': 0.30,
+            'profitability': 0.35,  
             'growth': 0.25,
-            'debt': 0.20
+            'debt': 0.15
         }
         
         total_score = 0
@@ -535,10 +561,13 @@ class FinancialCalculator:
         
         for category, weight in weights.items():
             if category in metrics.category_scores:
-                total_score += metrics.category_scores[category] * weight
-                total_weight += weight
+                score = metrics.category_scores[category]
+                if score is not None:  # ← VERIFICAÇÃO ADICIONAL
+                    total_score += score * weight
+                    total_weight += weight
         
-        return total_score / total_weight if total_weight > 0 else 0
+        result = total_score / total_weight if total_weight > 0 else 50.0
+        return result
     
     def _load_sector_benchmarks(self) -> Dict[str, Dict[str, float]]:
         """Carrega benchmarks setoriais"""
