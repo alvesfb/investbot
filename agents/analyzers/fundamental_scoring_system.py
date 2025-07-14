@@ -7,6 +7,7 @@ Data: 13/07/2025
 Versão: 2.0 (Corrigida)
 """
 
+import asyncio
 import json
 import logging
 import sys
@@ -352,6 +353,56 @@ class ScoringEngine:
         except Exception as e:
             self.logger.error(f"Erro no cálculo de valuation: {e}")
             return 50.0
+        
+
+    def calculate_composite_score_with_validation(self, metrics: Dict[str, Any], 
+                                                stock_code: str,
+                                                reasoning_agent: Optional[Agent] = None) -> Tuple[float, Dict[str, Any]]:
+        """Calcula score com validação inteligente via ReasoningTools"""
+        
+        # 1. Calcular score base (mantém lógica existente)
+        base_score = self.calculate_composite_score(metrics, stock_code)
+        
+        # 2. Se ReasoningTools disponível, validar score
+        if reasoning_agent and hasattr(reasoning_agent, 'run'):
+            try:
+                validation_prompt = f"""
+                VALIDAÇÃO DE SCORE FUNDAMENTALISTA - {stock_code}
+                
+                MÉTRICAS CALCULADAS:
+                - P/L: {metrics.get('pe_ratio', 'N/A')}
+                - P/VP: {metrics.get('pb_ratio', 'N/A')}
+                - ROE: {metrics.get('roe', 'N/A')}%
+                - ROA: {metrics.get('roa', 'N/A')}%
+                - Margem Líquida: {metrics.get('net_margin', 'N/A')}%
+                - Crescimento Receita: {metrics.get('revenue_growth', 'N/A')}%
+                
+                SCORE CALCULADO: {base_score:.1f}/100
+                
+                TAREFA: Use raciocínio lógico para validar se este score faz sentido:
+                1. As métricas de valuation (P/L, P/VP) estão coerentes com o score?
+                2. As métricas de rentabilidade (ROE, margens) justificam este score?
+                3. Há alguma inconsistência evidente?
+                4. O score deveria ser ajustado? Se sim, para qual valor e por quê?
+                
+                Retorne em JSON: {{"validated_score": number, "adjustments": [], "confidence": number}}
+                """
+                
+                # Usar ReasoningTools do Agno
+                validation_result = asyncio.run(reasoning_agent.run(validation_prompt))
+                
+                return base_score, {
+                    "validation_performed": True,
+                    "reasoning_result": validation_result,
+                    "original_score": base_score
+                }
+                
+            except Exception as e:
+                self.logger.warning(f"Validação com ReasoningTools falhou: {e}")
+        
+        # Fallback para score base
+        return base_score, {"validation_performed": False}
+
     
     def calculate_profitability_score(self, metrics: Dict[str, Any], 
                                     sector_benchmarks: Optional[Dict[str, float]] = None) -> float:
@@ -622,23 +673,41 @@ class FundamentalAnalyzerAgent(Agent):
     def __init__(self, config_path: Optional[str] = None):
         # Configuração do Agno (se disponível)
         if AGNO_AVAILABLE:
-            try:
-                super().__init__(
-                    model=Claude(id="claude-sonnet-4-20250514"),
-                    tools=[
-                        ReasoningTools(add_instructions=True),
-                        YFinanceTools(
-                            stock_price=True, 
-                            analyst_recommendations=True, 
-                            company_info=True, 
-                            company_news=True
-                        ),
-                    ],
-                    instructions="Você é um especialista em análise fundamentalista de ações brasileiras. Use análise quantitativa rigorosa.",
-                    markdown=True,
-                )
-            except Exception as e:
-                logger.warning(f"Erro na inicialização do Agno: {e}")
+            super().__init__(
+                model=Claude(id="claude-sonnet-4-20250514"),
+                tools=[
+                    ReasoningTools(add_instructions=True),
+                    YFinanceTools(
+                        stock_price=True,
+                        analyst_recommendations=True,
+                        company_info=True,
+                        company_news=True,
+                        historical_prices=True
+                    )
+                ],
+                instructions="""
+                Você é um analista fundamentalista expert que utiliza Claude 4 Sonnet para análises precisas.
+                
+                METODOLOGIA RIGOROSA:
+                1. Sempre use ReasoningTools para validar cálculos matemáticos
+                2. Compare resultados com benchmarks setoriais usando raciocínio estruturado
+                3. Identifique outliers e explique as razões
+                4. Gere justificativas detalhadas baseadas em dados concretos
+                
+                SCORES DE QUALIDADE:
+                - EXCELENTE (85-100): Empresas top-tier com fundamentos excepcionais
+                - BOA (70-84): Empresas sólidas com bons fundamentos
+                - MÉDIA (50-69): Empresas com fundamentos moderados
+                - FRACA (30-49): Empresas com fundamentos questionáveis  
+                - PROBLEMÁTICA (0-29): Empresas com sérios problemas fundamentais
+                
+                Sempre use tabelas para apresentar comparações e ReasoningTools para validar lógica.
+                """,
+                markdown=True,
+            )
+        else:
+            # Modo compatibilidade sem Agno
+            pass
         
         self.logger = logging.getLogger(__name__)
         
@@ -729,8 +798,13 @@ class FundamentalAnalyzerAgent(Agent):
             # 2. Obter dados financeiros
             financial_data = self._create_financial_data(stock_code)
             
-            # 3. Calcular métricas
-            metrics = self.calculator.calculate_all_metrics(financial_data)
+            # 3. Calcular métricas COM ANÁLISE INTELIGENTE
+            if AGNO_AVAILABLE and hasattr(self, 'run'):
+                # Usar versão inteligente
+                metrics = self.calculator.calculate_all_metrics(financial_data, reasoning_agent=self)
+            else:
+                # Usar versão tradicional
+                metrics = self.calculator.calculate_all_metrics(financial_data)
             
             # 4. Calcular scores por categoria
             category_scores = self._calculate_category_scores(metrics)
@@ -798,6 +872,82 @@ class FundamentalAnalyzerAgent(Agent):
                     "database_available": DATABASE_AVAILABLE
                 }
             }
+        
+    # ADICIONAR novo método:
+    async def analyze_single_stock_with_reasoning(self, stock_code: str) -> Dict[str, Any]:
+        """Análise fundamentalista com ReasoningTools para validação"""
+        
+        # 1. Executar análise base (mantém compatibilidade)
+        base_analysis = self.analyze_single_stock(stock_code)
+        
+        if "error" in base_analysis:
+            return base_analysis
+        
+        # 2. Se Agno disponível, usar Claude + ReasoningTools
+        if AGNO_AVAILABLE and hasattr(self, 'run'):
+            try:
+                score = base_analysis['fundamental_score']['composite_score']
+                tier = base_analysis['fundamental_score']['quality_tier']
+                
+                validation_prompt = f"""
+                VALIDAÇÃO INTELIGENTE - {stock_code}
+                
+                ANÁLISE CALCULADA:
+                - Score Composto: {score:.1f}/100
+                - Classificação: {tier}
+                - Setor: {base_analysis.get('sector', 'Desconhecido')}
+                
+                MÉTRICAS DETALHADAS:
+                {json.dumps(base_analysis.get('metrics_summary', {}), indent=2)}
+                
+                VALIDAÇÃO REQUERIDA:
+                1. O score de {score:.1f} é coerente com as métricas apresentadas?
+                2. A classificação "{tier}" está apropriada?
+                3. Há inconsistências que precisam ser corrigidas?
+                4. Considerando o contexto setorial, algum ajuste é necessário?
+                
+                Use ReasoningTools para validar cada conclusão.
+                
+                RETORNE análise estruturada com:
+                - Validação do score (correto/precisa ajuste)
+                - 3 pontos fortes identificados
+                - 3 pontos de atenção
+                - Recomendação final (COMPRA/NEUTRO/VENDA)
+                - Nível de confiança (0-100)
+                """
+                
+                intelligent_validation = await self.run(validation_prompt)
+                
+                # Combinar análises
+                enhanced_result = {
+                    **base_analysis,
+                    "intelligent_validation": intelligent_validation,
+                    "analysis_method": "claude_enhanced",
+                    "confidence_level": self._extract_confidence(intelligent_validation),
+                    "generated_at": datetime.now().isoformat()
+                }
+                
+                return enhanced_result
+                
+            except Exception as e:
+                self.logger.warning(f"Validação inteligente falhou: {e}")
+                # Fallback para análise base
+                return {
+                    **base_analysis,
+                    "analysis_method": "fallback_traditional",
+                    "fallback_reason": str(e)
+                }
+        
+        # Retorna análise base se Agno não disponível
+        return base_analysis
+
+    def _extract_confidence(self, validation_text: str) -> float:
+        """Extrai nível de confiança da análise"""
+        import re
+        confidence_match = re.search(r'confiança[:\s]+(\d+)', validation_text, re.IGNORECASE)
+        if confidence_match:
+            return float(confidence_match.group(1))
+        return 75.0  # Default
     
     def get_top_stocks(self, limit: int = 10) -> Dict[str, Any]:
         """Retorna as melhores ações baseado no score"""
