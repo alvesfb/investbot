@@ -26,6 +26,7 @@ class MetricCategory(Enum):
 class FinancialData:
     """Estrutura de dados financeiros para cálculos"""
     # Dados básicos
+    symbol: Optional[str] = None
     current_price: Optional[float] = None
     market_cap: Optional[float] = None
     shares_outstanding: Optional[float] = None
@@ -113,7 +114,7 @@ class FinancialCalculator:
     def __init__(self):
         self.sector_benchmarks = self._load_sector_benchmarks()
         
-    def calculate_all_metrics(self, data: FinancialData) -> FinancialMetrics:
+    def calculate_all_metrics(self, data: FinancialData, reasoning_agent=None) -> FinancialMetrics:
         """
         Calcula todas as métricas financeiras disponíveis
         
@@ -139,8 +140,13 @@ class FinancialCalculator:
             self._calculate_debt_metrics(data, metrics)
             self._calculate_liquidity_metrics(data, metrics)
             
-            # Calcular scores por categoria
-            self._calculate_category_scores(metrics, data.sector)
+            # ESCOLHER ENTRE VERSÕES:
+            if reasoning_agent:
+                # Versão inteligente com Agno
+                self._calculate_category_scores_intelligent(metrics, data.sector, reasoning_agent)
+            else:
+                # Versão tradicional (fallback)
+                self._calculate_category_scores(metrics, data.sector)
             
             # Calcular score geral
             metrics.overall_score = self._calculate_overall_score(metrics)
@@ -323,6 +329,115 @@ class FinancialCalculator:
         # Score de Endividamento
         debt_score = self._score_debt_metrics(metrics, benchmarks)
         metrics.category_scores['debt'] = debt_score
+
+
+    def _calculate_category_scores_intelligent(self, metrics: FinancialMetrics, 
+                                         sector: Optional[str],
+                                         reasoning_agent: Optional['Agent'] = None):
+        """
+        Versão inteligente do cálculo de scores por categoria
+        Usa ReasoningTools do Agno para benchmarking setorial avançado
+        """
+        
+        # 1. SEMPRE executar cálculo base primeiro (mantém compatibilidade)
+        self._calculate_category_scores(metrics, sector)
+        
+        # 2. Se Agno disponível, fazer análise inteligente
+        if reasoning_agent and sector and hasattr(reasoning_agent, 'run'):
+            try:
+                import asyncio
+                
+                benchmark_prompt = f"""
+                BENCHMARKING SETORIAL INTELIGENTE
+                
+                EMPRESA: {getattr(metrics, 'stock_code', 'UNKNOWN')}
+                SETOR: {sector}
+                
+                MÉTRICAS CALCULADAS:
+                - P/L: {metrics.pe_ratio if metrics.pe_ratio else 'N/A'}
+                - P/VP: {metrics.pb_ratio if metrics.pb_ratio else 'N/A'}  
+                - ROE: {metrics.roe if metrics.roe else 'N/A'}%
+                - ROA: {metrics.roa if metrics.roa else 'N/A'}%
+                - Margem Líquida: {metrics.net_margin if metrics.net_margin else 'N/A'}%
+                - Crescimento Receita: {metrics.revenue_growth_1y if metrics.revenue_growth_1y else 'N/A'}%
+                - Dívida/Patrimônio: {metrics.debt_to_equity if metrics.debt_to_equity else 'N/A'}
+                
+                SCORES CALCULADOS PELO ALGORITMO BASE:
+                - Valuation: {metrics.category_scores.get('valuation', 0):.1f}/100
+                - Rentabilidade: {metrics.category_scores.get('profitability', 0):.1f}/100
+                - Crescimento: {metrics.category_scores.get('growth', 0):.1f}/100
+                - Endividamento: {metrics.category_scores.get('debt', 0):.1f}/100
+                
+                ANÁLISE SETORIAL REQUERIDA:
+                1. Para o setor {sector}, essas métricas estão dentro do esperado?
+                2. Algum score parece inconsistente com benchmarks típicos do setor?
+                3. Há outliers positivos ou negativos que merecem ajuste?
+                4. Considerando ciclos setoriais, os scores refletem bem o momento?
+                
+                RETORNE EM JSON:
+                {{
+                    "sector_analysis": "análise textual do setor",
+                    "suggested_adjustments": {{
+                        "valuation": number ou null,
+                        "profitability": number ou null, 
+                        "growth": number ou null,
+                        "debt": number ou null
+                    }},
+                    "confidence_level": number de 0 a 100,
+                    "key_insights": ["insight1", "insight2", "insight3"],
+                    "reasoning": "justificativa dos ajustes"
+                }}
+                """
+                
+                # Executar análise inteligente
+                intelligent_result = asyncio.run(reasoning_agent.run(benchmark_prompt))
+                
+                # Aplicar ajustes sugeridos se confidence > 70
+                if self._parse_intelligence_result(intelligent_result, metrics):
+                    self.logger.info(f"Scores ajustados inteligentemente para {sector}")
+                
+                # Armazenar análise para auditoria
+                metrics.intelligent_analysis = intelligent_result
+                
+            except Exception as e:
+                self.logger.warning(f"Análise inteligente falhou: {e}")
+                # Fallback: usar scores base (sem problemas)
+        
+    def _parse_intelligence_result(self, result: str, metrics: FinancialMetrics) -> bool:
+        """Processa resultado da análise inteligente e aplica ajustes"""
+        try:
+            import json
+            import re
+            
+            # Extrair JSON da resposta
+            json_match = re.search(r'\{.*\}', result, re.DOTALL)
+            if not json_match:
+                return False
+            
+            analysis = json.loads(json_match.group())
+            confidence = analysis.get('confidence_level', 0)
+            
+            # Aplicar ajustes apenas se confidence > 70
+            if confidence > 70:
+                adjustments = analysis.get('suggested_adjustments', {})
+                
+                for category, new_score in adjustments.items():
+                    if new_score is not None and 0 <= new_score <= 100:
+                        # Aplicar ajuste ponderado (50% original + 50% sugestão)
+                        original_score = metrics.category_scores.get(category, 50)
+                        adjusted_score = (original_score + new_score) / 2
+                        metrics.category_scores[category] = adjusted_score
+                        
+                        self.logger.info(f"Score {category} ajustado: {original_score:.1f} → {adjusted_score:.1f}")
+                
+                return True
+            
+            return False
+            
+        except Exception as e:
+            self.logger.warning(f"Erro ao processar resultado inteligente: {e}")
+            return False
+
     
     def _score_valuation_metrics(self, metrics: FinancialMetrics, benchmarks: Dict) -> float:
         """Calcula score de valuation (0-100)"""
