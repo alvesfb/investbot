@@ -11,6 +11,8 @@ import asyncio
 import json
 import logging
 import sys
+import yfinance as yf
+import time
 from pathlib import Path
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
@@ -1012,85 +1014,245 @@ class FundamentalAnalyzerAgent(Agent):
     # ====== MÉTODOS AUXILIARES ======
     
     def _get_stock_data(self, stock_code: str) -> Dict[str, Any]:
-        """Busca dados da ação com acesso direto (contorna problema SQLAlchemy)"""
+        """
+        Busca dados da ação com sistema inteligente:
+        1. Tentar banco local
+        2. Se não encontrar, buscar dados reais via API
+        3. Salvar no banco
+        4. Retornar dados reais
+        """
+        
+        # 1. TENTAR BANCO LOCAL PRIMEIRO
+        if DATABASE_AVAILABLE and self.stock_repo:
+            try:
+                stock = self.stock_repo.get_stock_by_code(stock_code)
+                if stock and self._is_data_fresh(stock):
+                    self.logger.info(f"✅ {stock_code} encontrado no banco (dados frescos)")
+                    return self._stock_to_dict(stock)
+                elif stock:
+                    self.logger.info(f"⚠️  {stock_code} no banco mas dados antigos - atualizando...")
+                else:
+                    self.logger.info(f"❌ {stock_code} não encontrado no banco - buscando dados reais...")
+            except Exception as e:
+                self.logger.warning(f"Erro acessando banco: {e}")
+        
+        # 2. BUSCAR DADOS REAIS VIA API
+        real_data = self._fetch_real_financial_data(stock_code)
+        
+        if real_data:
+            # 3. SALVAR NO BANCO PARA PRÓXIMAS CONSULTAS
+            self._save_to_database(stock_code, real_data)
+            
+            # 4. RETORNAR DADOS REAIS
+            self.logger.info(f"✅ Dados reais obtidos para {stock_code}")
+            return real_data
+        else:
+            # 5. ÚLTIMO RECURSO: Informar que não foi possível obter dados
+            self.logger.error(f"❌ Não foi possível obter dados reais para {stock_code}")
+            raise ValueError(f"Dados não disponíveis para {stock_code}")
+        
+    def _fetch_real_financial_data(self, stock_code: str) -> Dict[str, Any]:
+        """Busca dados financeiros reais via APIs"""
+        
+        self.logger.info(f"🌐 Buscando dados reais para {stock_code}...")
+        
         try:
-            import sqlite3
-            from pathlib import Path
+            # Tentar yfinance primeiro (gratuito e confiável)
+            ticker_symbol = f"{stock_code}.SA"  # Formato B3
+            ticker = yf.Ticker(ticker_symbol)
             
-            db_path = Path("data/investment_system.db")
-            conn = sqlite3.connect(str(db_path))
-            cursor = conn.cursor()
+            # Obter informações básicas
+            info = ticker.info
             
-            cursor.execute("""
-            SELECT codigo, nome, setor, preco_atual, market_cap, volume_medio,
-                revenue, net_income, total_assets, total_equity, total_debt,
-                roe, roa, debt_to_equity, net_margin, pe_ratio, pb_ratio
-            FROM stocks 
-            WHERE codigo = ? AND (ativo = 1 OR ativo IS NULL)
-            """, (stock_code,))
+            if not info or 'marketCap' not in info:
+                self.logger.warning(f"Dados insuficientes no yfinance para {stock_code}")
+                return self._try_alternative_sources(stock_code)
             
-            result = cursor.fetchone()
-            conn.close()
+            # Obter demonstrações financeiras
+            financials = ticker.financials
+            balance_sheet = ticker.balance_sheet
             
-            if result:
-                self.logger.info(f"✅ Dados encontrados para {stock_code}")
-                return {
-                    'codigo': result[0],
-                    'nome': result[1],
-                    'setor': result[2] or 'Diversos',
-                    'preco_atual': result[3] or 100.0,
-                    'market_cap': result[4] or 1000000000,
-                    'volume_medio': result[5] or 1000000,
-                    'revenue': result[6] or 500000000,
-                    'net_income': result[7] or 50000000,
-                    'total_assets': result[8] or 800000000,
-                    'total_equity': result[9] or 400000000,
-                    'total_debt': result[10] or 200000000,
-                    'roe': result[11] or 10.0,
-                    'roa': result[12] or 5.0,
-                    'debt_to_equity': result[13] or 0.5,
-                    'net_margin': result[14] or 10.0,
-                    'pe_ratio': result[15] or 15.0,
-                    'pb_ratio': result[16] or 1.5
-                }
-            else:
-                self.logger.warning(f"❌ {stock_code} não encontrado no banco")
-                # Fallback com dados realistas
-                return {
-                    'codigo': stock_code,
-                    'nome': f'Empresa {stock_code}',
-                    'setor': 'Diversos',
-                    'preco_atual': 100.0,
-                    'market_cap': 50000000000,
-                    'volume_medio': 1000000,
-                    'revenue': 25000000000,
-                    'net_income': 2500000000,
-                    'total_assets': 40000000000,
-                    'total_equity': 20000000000,
-                    'total_debt': 10000000000,
-                    'roe': 12.5,
-                    'roa': 6.25,
-                    'debt_to_equity': 0.5,
-                    'net_margin': 10.0,
-                    'pe_ratio': 20.0,
-                    'pb_ratio': 2.5
-                }
-            
-        except Exception as e:
-            self.logger.error(f"Erro buscando {stock_code}: {e}")
-            # Fallback final
-            return {
+            # Extrair dados fundamentais REAIS
+            real_data = {
                 'codigo': stock_code,
-                'nome': f'Empresa {stock_code}',
-                'setor': 'Diversos',
-                'preco_atual': 100.0,
-                'market_cap': 50000000000,
-                'revenue': 25000000000,
-                'net_income': 2500000000,
-                'roe': 12.5,
-                'roa': 6.25
+                'nome': info.get('longName', f'Empresa {stock_code}'),
+                'setor': self._normalize_sector(info.get('sector', 'Diversos')),
+                'preco_atual': info.get('currentPrice', info.get('regularMarketPrice', 0)),
+                'market_cap': info.get('marketCap', 0),
+                'volume_medio': info.get('averageVolume', 0),
+                
+                # Dados financeiros REAIS
+                'revenue': self._get_financial_metric(financials, 'Total Revenue'),
+                'net_income': self._get_financial_metric(financials, 'Net Income'),
+                'total_assets': self._get_balance_metric(balance_sheet, 'Total Assets'),
+                'total_equity': self._get_balance_metric(balance_sheet, 'Total Equity Gross Minority Interest'),
+                'total_debt': self._get_balance_metric(balance_sheet, 'Total Debt'),
+                
+                # Métricas calculadas REAIS
+                'roe': info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
+                'roa': info.get('returnOnAssets', 0) * 100 if info.get('returnOnAssets') else 0,
+                'net_margin': info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
+                'pe_ratio': info.get('forwardPE', info.get('trailingPE', 0)),
+                'pb_ratio': info.get('priceToBook', 0),
+                'debt_to_equity': self._calculate_debt_to_equity(balance_sheet),
+                
+                # Metadados
+                'data_source': 'yfinance',
+                'data_atualizacao': datetime.now().isoformat(),
+                'data_quality': 'REAL'
             }
+            
+            # Validar dados obtidos
+            if self._validate_financial_data(real_data):
+                self.logger.info(f"✅ Dados reais validados para {stock_code}")
+                return real_data
+            else:
+                self.logger.warning(f"⚠️  Dados reais incompletos para {stock_code}")
+                return None
+                
+        except Exception as e:
+            self.logger.error(f"Erro buscando dados reais para {stock_code}: {e}")
+            return self._try_alternative_sources(stock_code)
+        
+    def _get_financial_metric(self, financials, metric_name: str) -> float:
+        """Extrai métrica financeira das demonstrações"""
+        
+        try:
+            if financials is not None and not financials.empty:
+                if metric_name in financials.index:
+                    # Pegar valor mais recente (primeira coluna)
+                    value = financials.loc[metric_name].iloc[0]
+                    return float(value) if pd.notna(value) else 0
+        except Exception as e:
+            self.logger.debug(f"Erro extraindo {metric_name}: {e}")
+        
+        return 0
     
+    def _get_balance_metric(self, balance_sheet, metric_name: str) -> float:
+        """Extrai métrica do balanço patrimonial"""
+        
+        try:
+            if balance_sheet is not None and not balance_sheet.empty:
+                if metric_name in balance_sheet.index:
+                    value = balance_sheet.loc[metric_name].iloc[0]
+                    return float(value) if pd.notna(value) else 0
+        except Exception as e:
+            self.logger.debug(f"Erro extraindo {metric_name}: {e}")
+        
+        return 0
+    
+    def _calculate_debt_to_equity(self, balance_sheet) -> float:
+        """Calcula debt-to-equity ratio dos dados reais"""
+        
+        try:
+            total_debt = self._get_balance_metric(balance_sheet, 'Total Debt')
+            total_equity = self._get_balance_metric(balance_sheet, 'Total Equity Gross Minority Interest')
+            
+            if total_equity > 0:
+                return total_debt / total_equity
+        except Exception:
+            pass
+        
+        return 0
+
+    def _validate_financial_data(self, data: Dict[str, Any]) -> bool:
+        """Valida se os dados obtidos são suficientes para análise"""
+        
+        required_fields = ['market_cap', 'revenue', 'net_income']
+        
+        for field in required_fields:
+            if not data.get(field) or data[field] <= 0:
+                self.logger.warning(f"Campo obrigatório inválido: {field} = {data.get(field)}")
+                return False
+        
+        # Validações de sanidade
+        if data['market_cap'] < 1000000:  # Menos de 1M
+            self.logger.warning(f"Market cap muito baixo: {data['market_cap']}")
+            return False
+        
+        if data['pe_ratio'] and (data['pe_ratio'] < 0 or data['pe_ratio'] > 1000):
+            self.logger.warning(f"P/L suspeito: {data['pe_ratio']}")
+            # Não invalidar por isso, apenas avisar
+        
+        return True
+
+    def _save_to_database(self, stock_code: str, data: Dict[str, Any]) -> bool:
+        """Salva dados reais no banco para futuras consultas"""
+        
+        if not DATABASE_AVAILABLE or not self.stock_repo:
+            self.logger.warning("Banco não disponível - dados não serão persistidos")
+            return False
+        
+        try:
+            # Verificar se já existe
+            existing_stock = self.stock_repo.get_stock_by_code(stock_code)
+            
+            if existing_stock:
+                # Atualizar dados existentes
+                self.logger.info(f"📝 Atualizando {stock_code} no banco")
+                success = self.stock_repo.update_stock_data(stock_code, data)
+            else:
+                # Criar nova entrada
+                self.logger.info(f"➕ Adicionando {stock_code} ao banco")
+                success = self.stock_repo.create_stock(data)
+            
+            if success:
+                self.logger.info(f"✅ {stock_code} salvo no banco com dados reais")
+                return True
+            else:
+                self.logger.error(f"❌ Falha ao salvar {stock_code} no banco")
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Erro salvando {stock_code} no banco: {e}")
+            return False
+
+    def _is_data_fresh(self, stock) -> bool:
+        """Verifica se os dados no banco ainda estão frescos"""
+        
+        try:
+            if hasattr(stock, 'data_atualizacao') and stock.data_atualizacao:
+                last_update = datetime.fromisoformat(stock.data_atualizacao.replace('Z', '+00:00'))
+                age = datetime.now() - last_update.replace(tzinfo=None)
+                
+                # Considerar dados frescos se atualizados nas últimas 24 horas
+                return age < timedelta(hours=24)
+        except Exception as e:
+            self.logger.debug(f"Erro verificando freshness: {e}")
+        
+        return False
+
+    def _try_alternative_sources(self, stock_code: str) -> Dict[str, Any]:
+        """Tenta fontes alternativas quando yfinance falha"""
+        
+        # Poderia implementar outras APIs como:
+        # - Alpha Vantage
+        # - Financial Modeling Prep  
+        # - Yahoo Finance direto
+        # - APIs brasileiras (Economatica, etc.)
+        
+        self.logger.warning(f"Fontes alternativas não implementadas para {stock_code}")
+        return None
+
+    def _normalize_sector(self, sector: str) -> str:
+        """Normaliza nome do setor para padrão brasileiro"""
+        
+        sector_mapping = {
+            'Technology': 'Tecnologia',
+            'Financial Services': 'Financeiro',
+            'Energy': 'Petróleo',
+            'Basic Materials': 'Mineração',
+            'Consumer Cyclical': 'Varejo',
+            'Consumer Defensive': 'Consumo',
+            'Healthcare': 'Saúde',
+            'Industrials': 'Industrial',
+            'Real Estate': 'Imobiliário',
+            'Utilities': 'Utilidades',
+            'Communication Services': 'Telecomunicações'
+        }
+        
+        return sector_mapping.get(sector, sector)
+        
     def _create_financial_data(self, stock_code: str) -> FinancialData:
         """Cria FinancialData com dados REAIS do banco"""
         try:

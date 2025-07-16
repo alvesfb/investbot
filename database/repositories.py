@@ -33,20 +33,83 @@ class StockRepository(BaseRepository):
     """Repository para operações com ações"""
 
     def create_stock(self, stock_data: Dict[str, Any]) -> Stock:
-        """Cria uma nova ação"""
+        """Cria uma nova ação (MÉTODO EXISTENTE ESTENDIDO)"""
         with self._get_session() as db:
-            stock = Stock(**stock_data)
+            # Verificar se já existe (evitar duplicatas)
+            existing = db.query(Stock).filter(Stock.codigo == stock_data.get('codigo', '').upper()).first()
+            if existing:
+                logger.warning(f"Ação {stock_data.get('codigo')} já existe")
+                return existing
+            
+            # Criar com dados completos (incluindo dados de API se fornecidos)
+            stock = Stock(
+                codigo=stock_data.get('codigo', '').upper(),
+                nome=stock_data.get('nome', f"Empresa {stock_data.get('codigo', '')}"),
+                setor=stock_data.get('setor', 'Diversos'),
+                preco_atual=stock_data.get('preco_atual', 0),
+                market_cap=stock_data.get('market_cap', 0),
+                volume_medio=stock_data.get('volume_medio', 0),
+                
+                # Campos financeiros (podem vir da API)
+                revenue=stock_data.get('revenue', 0),
+                net_income=stock_data.get('net_income', 0),
+                total_assets=stock_data.get('total_assets', 0),
+                total_equity=stock_data.get('total_equity', 0),
+                total_debt=stock_data.get('total_debt', 0),
+                roe=stock_data.get('roe', 0),
+                roa=stock_data.get('roa', 0),
+                debt_to_equity=stock_data.get('debt_to_equity', 0),
+                net_margin=stock_data.get('net_margin', 0),
+                pe_ratio=stock_data.get('pe_ratio', 0),
+                pb_ratio=stock_data.get('pb_ratio', 0),
+                
+                # Metadados (novos campos opcionais)
+                data_source=stock_data.get('data_source', 'manual'),
+                data_atualizacao=datetime.now(),
+                ativo=stock_data.get('ativo', True)
+            )
+            
             db.add(stock)
             db.commit()
             db.refresh(stock)
             logger.info(f"Ação criada: {stock.codigo}")
             return stock
 
-    def get_stock_by_code(self, codigo: str) -> Optional[Stock]:
-        """Busca ação por código"""
+    def get_stock_by_code(self, codigo: str, fetch_if_missing: bool = False, max_age_hours: int = 24) -> Optional[Stock]:
+        """
+        Busca ação por código (MÉTODO EXISTENTE ESTENDIDO)
+        
+        Args:
+            codigo: Código da ação
+            fetch_if_missing: Se True, busca via API quando não encontrada
+            max_age_hours: Idade máxima dos dados em horas
+        """
         with self._get_session() as db:
-            return db.query(Stock).filter(Stock.codigo ==
-                                          codigo.upper()).first()
+            stock = db.query(Stock).filter(Stock.codigo == codigo.upper()).first()
+            
+            if not stock and fetch_if_missing:
+                # NOVA FUNCIONALIDADE: Buscar via API se não encontrada
+                logger.info(f"🌐 {codigo} não encontrado - buscando via API...")
+                api_data = self._fetch_from_api(codigo)
+                
+                if api_data:
+                    # Usar método create_stock existente
+                    stock = self.create_stock(api_data)
+                    logger.info(f"✅ {codigo} criado com dados da API")
+            
+            elif stock and self._needs_refresh(stock, max_age_hours):
+                # NOVA FUNCIONALIDADE: Atualizar dados antigos
+                logger.info(f"🔄 {codigo} com dados antigos - atualizando...")
+                api_data = self._fetch_from_api(codigo)
+                
+                if api_data:
+                    # Usar método update_stock_price existente (estendido)
+                    self.update_stock_price(codigo, api_data.get('preco_atual', stock.preco_atual))
+                    self.update_stock_fundamentals(codigo, api_data)
+                    # Recarregar objeto atualizado
+                    db.refresh(stock)
+            
+            return stock
 
     def get_stock_by_id(self, stock_id: int) -> Optional[Stock]:
         """Busca ação por ID"""
@@ -91,35 +154,45 @@ class StockRepository(BaseRepository):
 
             return query.order_by(desc(Stock.market_cap)).all()
 
-    def update_stock_price(self,
-                           codigo: str,
-                           preco: float,
-                           volume: float = None) -> bool:
-        """Atualiza preço atual da ação"""
+    def update_stock_price(self, codigo: str, preco: float, volume: float = None, **kwargs) -> bool:
+        """Atualiza preço atual da ação (MÉTODO EXISTENTE ESTENDIDO)"""
         with self._get_session() as db:
-            stock = db.query(Stock).filter(Stock.codigo ==
-                                           codigo.upper()).first()
+            stock = db.query(Stock).filter(Stock.codigo == codigo.upper()).first()
             if stock:
                 stock.preco_atual = preco
                 if volume:
                     stock.volume_medio = volume
-                stock.ultima_atualizacao_preco = datetime.now()
+                
+                # NOVA FUNCIONALIDADE: Atualizar outros campos se fornecidos
+                for field, value in kwargs.items():
+                    if hasattr(stock, field) and value is not None:
+                        setattr(stock, field, value)
+                
+                stock.data_atualizacao = datetime.now()
                 db.commit()
                 return True
             return False
 
-    def update_stock_fundamentals(self,
-                                  codigo: str,
-                                  fundamentals: Dict[str, Any]) -> bool:
-        """Atualiza dados fundamentalistas da ação"""
+    def update_stock_fundamentals(self, codigo: str, fundamentals: Dict[str, Any]) -> bool:
+        """Atualiza dados fundamentalistas da ação (MÉTODO EXISTENTE ESTENDIDO)"""
         with self._get_session() as db:
-            stock = db.query(Stock).filter(Stock.codigo ==
-                                           codigo.upper()).first()
+            stock = db.query(Stock).filter(Stock.codigo == codigo.upper()).first()
             if stock:
+                # Campos financeiros tradicionais
+                traditional_fields = [
+                    'revenue', 'net_income', 'total_assets', 'total_equity', 'total_debt',
+                    'roe', 'roa', 'debt_to_equity', 'net_margin', 'pe_ratio', 'pb_ratio'
+                ]
+                
+                # FUNCIONALIDADE ESTENDIDA: Atualizar todos os campos fornecidos
                 for key, value in fundamentals.items():
-                    if hasattr(stock, key):
+                    if hasattr(stock, key) and value is not None:
                         setattr(stock, key, value)
-                stock.ultima_atualizacao_fundamentals = datetime.now()
+                
+                # Atualizar metadados
+                stock.data_source = fundamentals.get('data_source', stock.data_source or 'API')
+                stock.data_atualizacao = datetime.now()
+                
                 db.commit()
                 return True
             return False
@@ -147,6 +220,79 @@ class StockRepository(BaseRepository):
 
             return [{"setor": setor,
                      "count": count} for setor, count in result]
+        
+    def _fetch_from_api(self, codigo: str) -> Optional[Dict[str, Any]]:
+        """Busca dados da API (método auxiliar interno)"""
+        try:
+            # Importar yfinance apenas quando necessário
+            import yfinance as yf
+            
+            ticker_symbol = f"{codigo}.SA"
+            ticker = yf.Ticker(ticker_symbol)
+            info = ticker.info
+            
+            if not info or 'marketCap' not in info:
+                logger.warning(f"Dados insuficientes para {codigo}")
+                return None
+            
+            # Extrair dados relevantes
+            return {
+                'codigo': codigo,
+                'nome': info.get('longName', f'Empresa {codigo}'),
+                'setor': self._normalize_sector(info.get('sector', 'Diversos')),
+                'preco_atual': info.get('currentPrice', info.get('regularMarketPrice', 0)),
+                'market_cap': info.get('marketCap', 0),
+                'volume_medio': info.get('averageVolume', 0),
+                'revenue': self._safe_get_financial(ticker, 'Total Revenue'),
+                'net_income': self._safe_get_financial(ticker, 'Net Income'),
+                'roe': info.get('returnOnEquity', 0) * 100 if info.get('returnOnEquity') else 0,
+                'roa': info.get('returnOnAssets', 0) * 100 if info.get('returnOnAssets') else 0,
+                'net_margin': info.get('profitMargins', 0) * 100 if info.get('profitMargins') else 0,
+                'pe_ratio': info.get('forwardPE', info.get('trailingPE', 0)),
+                'pb_ratio': info.get('priceToBook', 0),
+                'data_source': 'yfinance'
+            }
+            
+        except Exception as e:
+            logger.error(f"Erro buscando dados de {codigo}: {e}")
+            return None
+
+    def _needs_refresh(self, stock: Stock, max_age_hours: int) -> bool:
+        """Verifica se ação precisa de atualização"""
+        if not stock.data_atualizacao:
+            return True
+        
+        age = datetime.now() - stock.data_atualizacao
+        return age.total_seconds() / 3600 > max_age_hours
+
+    def _safe_get_financial(self, ticker, metric_name: str) -> float:
+        """Extrai métrica financeira com segurança"""
+        try:
+            financials = ticker.financials
+            if financials is not None and not financials.empty:
+                if metric_name in financials.index:
+                    value = financials.loc[metric_name].iloc[0]
+                    return float(value) if pd.notna(value) else 0
+        except Exception:
+            pass
+        return 0
+
+    def _normalize_sector(self, sector: str) -> str:
+        """Normaliza nome do setor"""
+        sector_mapping = {
+            'Technology': 'Tecnologia',
+            'Financial Services': 'Financeiro',
+            'Energy': 'Petróleo',
+            'Basic Materials': 'Mineração',
+            'Consumer Cyclical': 'Varejo',
+            'Consumer Defensive': 'Consumo',
+            'Healthcare': 'Saúde',
+            'Industrials': 'Industrial',
+            'Real Estate': 'Imobiliário',
+            'Utilities': 'Utilidades',
+            'Communication Services': 'Telecomunicações'
+        }
+        return sector_mapping.get(sector, sector)
 
 
 class RecommendationRepository(BaseRepository):
