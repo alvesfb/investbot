@@ -1,9 +1,3 @@
-# config/settings.py
-"""
-Configurações Centralizadas do Sistema de Recomendações de Investimentos
-Inclui configurações para todas as fases do projeto
-"""
-
 import os
 from pathlib import Path
 from typing import Optional, Dict, Any, List
@@ -25,9 +19,10 @@ class Settings:
         self.logs_dir = self.project_root / "logs"
         self.config_dir = self.project_root / "config"
         self.reports_dir = self.project_root / "reports"
+        self.cache_dir = self.project_root / "cache"
         
         # Criar diretórios se não existirem
-        for directory in [self.data_dir, self.logs_dir, self.reports_dir]:
+        for directory in [self.data_dir, self.logs_dir, self.reports_dir, self.cache_dir]:
             directory.mkdir(exist_ok=True)
         
         # ==================== DATABASE ====================
@@ -36,12 +31,56 @@ class Settings:
             f"sqlite:///{self.data_dir}/investment_system.db"
         )
         
-        # ==================== APIs EXTERNAS ====================
-        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "your_claude_api_key_here")
-        self.alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+        # ==================== APIs FINANCEIRAS (MULTI-API) ====================
+        
+        # YFinance (primário)
         self.yfinance_enabled = os.getenv("YFINANCE_ENABLED", "true").lower() == "true"
+        self.yfinance_timeout = int(os.getenv("YFINANCE_TIMEOUT", "15"))
+        self.yfinance_max_retries = int(os.getenv("YFINANCE_MAX_RETRIES", "3"))
+        
+        # Alpha Vantage (backup)
+        self.alpha_vantage_api_key = os.getenv("ALPHA_VANTAGE_API_KEY", "")
+        self.alpha_vantage_timeout = int(os.getenv("ALPHA_VANTAGE_TIMEOUT", "10"))
+        self.alpha_vantage_daily_limit = int(os.getenv("ALPHA_VANTAGE_DAILY_LIMIT", "500"))
+        
+        # Financial Modeling Prep (backup)
+        self.fmp_api_key = os.getenv("FMP_API_KEY", "")
+        self.fmp_timeout = int(os.getenv("FMP_TIMEOUT", "10"))
+        self.fmp_daily_limit = int(os.getenv("FMP_DAILY_LIMIT", "250"))
+        
+        # Twelve Data (backup)
+        self.twelve_data_api_key = os.getenv("TWELVE_DATA_API_KEY", "")
+        self.twelve_data_timeout = int(os.getenv("TWELVE_DATA_TIMEOUT", "10"))
+        
+        # ==================== CACHE SYSTEM ====================
+        self.cache_enabled = os.getenv("CACHE_ENABLED", "true").lower() == "true"
+        self.financial_cache_dir = os.getenv("FINANCIAL_CACHE_DIR", str(self.cache_dir / "financial"))
+        
+        # TTL por tipo de dado (em segundos)
+        self.cache_ttl_market_data = int(os.getenv("CACHE_TTL_MARKET_DATA", "300"))      # 5 min
+        self.cache_ttl_fundamentals = int(os.getenv("CACHE_TTL_FUNDAMENTALS", "3600"))  # 1 hora
+        self.cache_ttl_company_info = int(os.getenv("CACHE_TTL_COMPANY_INFO", "86400")) # 24 horas
+        self.cache_ttl_static_data = int(os.getenv("CACHE_TTL_STATIC_DATA", "604800"))  # 7 dias
+        
+        # ==================== MULTI-API STRATEGY ====================
+        self.api_strategy_enabled = os.getenv("API_STRATEGY_ENABLED", "true").lower() == "true"
+        self.api_fallback_enabled = os.getenv("API_FALLBACK_ENABLED", "true").lower() == "true"
+        self.static_data_fallback = os.getenv("STATIC_DATA_FALLBACK", "true").lower() == "true"
+        self.intelligent_fallback = os.getenv("INTELLIGENT_FALLBACK", "true").lower() == "true"
+        
+        # Prioridade dos providers (ordem de tentativa)
+        self.api_provider_priority = [
+            "yfinance_primary",
+            "yfinance_alternative", 
+            "alpha_vantage",
+            "fmp",
+            "twelve_data",
+            "static_data",
+            "intelligent_fallback"
+        ]
         
         # ==================== AGNO FRAMEWORK ====================
+        self.anthropic_api_key = os.getenv("ANTHROPIC_API_KEY", "your_claude_api_key_here")
         self.claude_model = os.getenv("CLAUDE_MODEL", "claude-3-sonnet-20240229")
         self.agno_max_workers = int(os.getenv("AGNO_MAX_WORKERS", "5"))
         self.agno_log_level = os.getenv("AGNO_LOG_LEVEL", "INFO")
@@ -51,42 +90,31 @@ class Settings:
         self.log_level = os.getenv("LOG_LEVEL", "INFO")
         self.log_format = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         self.log_file = self.logs_dir / "investment_system.log"
-        self.log_rotation = "1 day"
-        self.log_retention = "30 days"
-        self.log_max_size = "50 MB"
+        self.enable_api_logging = os.getenv("ENABLE_API_LOGGING", "true").lower() == "true"
         
-        # ==================== PERFORMANCE ====================
-        self.max_concurrent_requests = int(os.getenv("MAX_CONCURRENT_REQUESTS", "10"))
-        self.request_timeout = int(os.getenv("REQUEST_TIMEOUT", "30"))
-        self.cache_ttl_hours = int(os.getenv("CACHE_TTL_HOURS", "6"))
+        # ==================== RATE LIMITING ====================
+        self.rate_limit_enabled = os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true"
+        self.rate_limit_requests_per_minute = int(os.getenv("RATE_LIMIT_RPM", "60"))
+        self.rate_limit_burst_size = int(os.getenv("RATE_LIMIT_BURST", "10"))
         
-        # ==================== SEGURANÇA ====================
-        self.enable_rate_limiting = os.getenv("ENABLE_RATE_LIMITING", "true").lower() == "true"
-        self.rate_limit_per_minute = int(os.getenv("RATE_LIMIT_PER_MINUTE", "60"))
-        self.enable_auth = os.getenv("ENABLE_AUTH", "false").lower() == "true"
+        # ==================== MONITORING ====================
+        self.monitoring_enabled = os.getenv("MONITORING_ENABLED", "true").lower() == "true"
+        self.stats_collection_enabled = os.getenv("STATS_COLLECTION", "true").lower() == "true"
+        self.performance_tracking = os.getenv("PERFORMANCE_TRACKING", "true").lower() == "true"
         
-        # ==================== BUSINESS RULES ====================
-        self.min_market_cap = float(os.getenv("MIN_MARKET_CAP", "1000000000"))  # 1B
-        self.exclude_penny_stocks = os.getenv("EXCLUDE_PENNY_STOCKS", "true").lower() == "true"
-        self.penny_stock_threshold = float(os.getenv("PENNY_STOCK_THRESHOLD", "5.0"))
+        # ==================== BACKUP E RECOVERY ====================
+        self.backup_enabled = os.getenv("BACKUP_ENABLED", "true").lower() == "true"
+        self.backup_interval_hours = int(os.getenv("BACKUP_INTERVAL_HOURS", "24"))
+        self.max_backup_files = int(os.getenv("MAX_BACKUP_FILES", "7"))
         
-        # ==================== NOTIFICAÇÕES ====================
-        self.email_enabled = os.getenv("EMAIL_ENABLED", "false").lower() == "true"
-        self.smtp_server = os.getenv("SMTP_SERVER", "")
-        self.smtp_port = int(os.getenv("SMTP_PORT", "587"))
-        self.smtp_username = os.getenv("SMTP_USERNAME", "")
-        self.smtp_password = os.getenv("SMTP_PASSWORD", "")
-        
-        # ==================== DESENVOLVIMENTO ====================
-        self.enable_mock_data = os.getenv("ENABLE_MOCK_DATA", "false").lower() == "true"
-        self.mock_analysis_delay = float(os.getenv("MOCK_ANALYSIS_DELAY", "1.0"))
-        self.enable_debug_endpoints = self.debug
+        # Criar diretório de cache financeiro
+        Path(self.financial_cache_dir).mkdir(parents=True, exist_ok=True)
     
     @property
     def database_path(self) -> Optional[Path]:
-        """Retorna o caminho do banco SQLite se aplicável"""
+        """Caminho do banco SQLite"""
         if self.database_url.startswith("sqlite"):
-            db_path = self.database_url.replace("sqlite:///", "").replace("sqlite://", "")
+            db_path = self.database_url.replace("sqlite:///", "")
             return Path(db_path)
         return None
     
@@ -100,31 +128,102 @@ class Settings:
         """Verifica se está em ambiente de desenvolvimento"""
         return self.environment.lower() == "development"
     
+    def get_api_config(self, provider: str) -> Dict[str, Any]:
+        """Retorna configuração específica de um provider"""
+        
+        configs = {
+            "yfinance": {
+                "enabled": self.yfinance_enabled,
+                "timeout": self.yfinance_timeout,
+                "max_retries": self.yfinance_max_retries,
+                "priority": 1
+            },
+            "alpha_vantage": {
+                "enabled": bool(self.alpha_vantage_api_key),
+                "api_key": self.alpha_vantage_api_key,
+                "timeout": self.alpha_vantage_timeout,
+                "daily_limit": self.alpha_vantage_daily_limit,
+                "priority": 2
+            },
+            "fmp": {
+                "enabled": bool(self.fmp_api_key),
+                "api_key": self.fmp_api_key,
+                "timeout": self.fmp_timeout,
+                "daily_limit": self.fmp_daily_limit,
+                "priority": 3
+            },
+            "twelve_data": {
+                "enabled": bool(self.twelve_data_api_key),
+                "api_key": self.twelve_data_api_key,
+                "timeout": self.twelve_data_timeout,
+                "priority": 4
+            }
+        }
+        
+        return configs.get(provider, {})
+    
+    def get_cache_config(self) -> Dict[str, Any]:
+        """Retorna configuração completa do cache"""
+        return {
+            "enabled": self.cache_enabled,
+            "cache_dir": self.financial_cache_dir,
+            "ttl": {
+                "market_data": self.cache_ttl_market_data,
+                "fundamentals": self.cache_ttl_fundamentals,
+                "company_info": self.cache_ttl_company_info,
+                "static_data": self.cache_ttl_static_data
+            }
+        }
+    
     def validate_configuration(self) -> Dict[str, Any]:
         """Valida configurações críticas"""
         issues = []
         warnings = []
+        info = []
         
-        # Validações críticas
+        # ==================== VALIDAÇÕES CRÍTICAS ====================
         if self.anthropic_api_key == "your_claude_api_key_here":
             issues.append("ANTHROPIC_API_KEY não configurada")
         
         if not self.database_url:
             issues.append("DATABASE_URL não configurada")
         
-        # Warnings
-        if not self.alpha_vantage_api_key and not self.yfinance_enabled:
+        # ==================== WARNINGS ====================
+        if not any([self.yfinance_enabled, self.alpha_vantage_api_key, self.fmp_api_key]):
             warnings.append("Nenhuma fonte de dados financeiros configurada")
+        
+        if not self.alpha_vantage_api_key and not self.fmp_api_key:
+            warnings.append("Nenhuma API de backup configurada - sistema pode falhar em caso de problemas com YFinance")
         
         if self.debug and self.is_production:
             warnings.append("Debug ativado em produção")
+        
+        if not self.cache_enabled:
+            warnings.append("Cache desabilitado - performance pode ser afetada")
+        
+        # ==================== INFORMAÇÕES ====================
+        enabled_apis = []
+        if self.yfinance_enabled:
+            enabled_apis.append("YFinance")
+        if self.alpha_vantage_api_key:
+            enabled_apis.append("Alpha Vantage")
+        if self.fmp_api_key:
+            enabled_apis.append("Financial Modeling Prep")
+        if self.twelve_data_api_key:
+            enabled_apis.append("Twelve Data")
+        
+        info.append(f"APIs habilitadas: {', '.join(enabled_apis) if enabled_apis else 'Nenhuma'}")
+        info.append(f"Cache: {'Habilitado' if self.cache_enabled else 'Desabilitado'}")
+        info.append(f"Fallback inteligente: {'Habilitado' if self.intelligent_fallback else 'Desabilitado'}")
         
         return {
             "valid": len(issues) == 0,
             "issues": issues,
             "warnings": warnings,
+            "info": info,
             "environment": self.environment,
-            "version": self.version
+            "version": self.version,
+            "api_strategy": self.api_strategy_enabled
         }
 
 
@@ -161,62 +260,13 @@ class Phase2Settings:
         
         # ==================== CACHE ====================
         self.cache_analysis_results = True
-        self.analysis_cache_ttl_hours = 24
-        self.benchmark_cache_ttl_hours = 168  # 7 dias
+        self.analysis_cache_ttl_hours = int(os.getenv("ANALYSIS_CACHE_TTL", "24"))
+        self.benchmark_cache_ttl_hours = int(os.getenv("BENCHMARK_CACHE_TTL", "168"))  # 7 dias
         
         # ==================== RELATÓRIOS ====================
         self.generate_analysis_reports = True
         self.reports_directory = "data/reports"
         self.report_formats = ["json", "excel"]
-        
-        # ==================== QUALIDADE DE DADOS ====================
-        self.data_quality_checks = True
-        self.min_pe_ratio = -100
-        self.max_pe_ratio = 200
-        self.min_pb_ratio = 0
-        self.max_pb_ratio = 50
-        self.min_roe = -100
-        self.max_roe = 200
-
-
-class Phase3Settings:
-    """Configurações específicas da Fase 3 - Recomendações"""
-    
-    def __init__(self):
-        # ==================== RECOMENDAÇÕES ====================
-        self.recommendation_weights = {
-            "fundamental": float(os.getenv("FUNDAMENTAL_WEIGHT", "0.70")),
-            "technical": float(os.getenv("TECHNICAL_WEIGHT", "0.30"))
-        }
-        
-        # ==================== CLASSIFICAÇÕES ====================
-        self.classification_thresholds = {
-            "compra_forte": 85,
-            "compra": 65,
-            "neutro_superior": 55,
-            "neutro_inferior": 45,
-            "venda": 25,
-            "venda_forte": 0
-        }
-        
-        # ==================== STOP LOSS ====================
-        self.stop_loss_config = {
-            "min_percentage": 3.0,
-            "max_percentage": 15.0,
-            "default_low_risk": 5.0,
-            "default_medium_risk": 7.5,
-            "default_high_risk": 10.0
-        }
-        
-        # ==================== JUSTIFICATIVAS ====================
-        self.enable_justification_refinement = True
-        self.max_justification_length = 500
-        self.min_justification_length = 100
-        
-        # ==================== CONFIDENCE ====================
-        self.min_confidence_level = 20
-        self.max_confidence_level = 95
-        self.convergence_bonus = 20  # Bonus por convergência entre análises
 
 
 class AgentSettings:
@@ -224,137 +274,115 @@ class AgentSettings:
     
     def __init__(self):
         # ==================== AGENTE COLETOR ====================
-        self.collector_config = {
-            "batch_size": int(os.getenv("COLLECTOR_BATCH_SIZE", "20")),
-            "retry_attempts": 3,
-            "retry_delay": 2.0,
-            "data_validation": True,
-            "enable_cache": True
-        }
+        self.collector_batch_size = int(os.getenv("COLLECTOR_BATCH_SIZE", "10"))
+        self.collector_delay_between_batches = int(os.getenv("COLLECTOR_DELAY", "2"))
+        self.collector_max_retries = int(os.getenv("COLLECTOR_MAX_RETRIES", "3"))
         
         # ==================== AGENTE ANALISADOR ====================
-        self.analyzer_config = {
-            "enable_sector_comparison": True,
-            "enable_peer_analysis": True,
-            "min_peer_count": 3,
-            "max_processing_time": 180,
-            "enable_outlier_detection": True
-        }
+        self.analyzer_parallel_limit = int(os.getenv("ANALYZER_PARALLEL_LIMIT", "5"))
+        self.analyzer_timeout = int(os.getenv("ANALYZER_TIMEOUT", "180"))
+        self.analyzer_cache_enabled = True
         
-        # ==================== AGENTE RECOMENDADOR ====================
-        self.recommender_config = {
-            "enable_market_context": True,
-            "enable_sector_rotation": True,
-            "risk_assessment": True,
-            "generate_reports": True,
-            "max_recommendations_per_run": 50
-        }
+        # ==================== REASONING AGENT ====================
+        self.reasoning_enabled = os.getenv("REASONING_ENABLED", "true").lower() == "true"
+        self.reasoning_timeout = int(os.getenv("REASONING_TIMEOUT", "60"))
+        self.reasoning_fallback_enabled = True
 
 
 # ==================== INSTÂNCIAS GLOBAIS ====================
-@lru_cache()
+settings = Settings()
+phase2_settings = Phase2Settings()
+agent_settings = AgentSettings()
+
+
+# ==================== FUNÇÕES DE ACESSO ====================
+@lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    """Factory para obter configurações principais (cached)"""
-    return Settings()
+    """Retorna instância singleton das configurações principais"""
+    return settings
 
 
-@lru_cache()
+@lru_cache(maxsize=1)
 def get_phase2_settings() -> Phase2Settings:
-    """Factory para obter configurações da Fase 2 (cached)"""
-    return Phase2Settings()
+    """Retorna configurações da Fase 2"""
+    return phase2_settings
 
 
-@lru_cache()
-def get_phase3_settings() -> Phase3Settings:
-    """Factory para obter configurações da Fase 3 (cached)"""
-    return Phase3Settings()
-
-
-@lru_cache()
+@lru_cache(maxsize=1)
 def get_agent_settings() -> AgentSettings:
-    """Factory para obter configurações dos agentes (cached)"""
-    return AgentSettings()
+    """Retorna configurações dos agentes"""
+    return agent_settings
 
 
-# ==================== FUNÇÕES UTILITÁRIAS ====================
-def load_env_file(env_file: str = ".env"):
-    """Carrega variáveis de ambiente de um arquivo"""
-    env_path = Path(env_file)
-    if not env_path.exists():
-        return False
-    
-    try:
-        with open(env_path, 'r', encoding='utf-8') as f:
-            for line in f:
-                line = line.strip()
-                if line and not line.startswith('#') and '=' in line:
-                    key, value = line.split('=', 1)
-                    os.environ.setdefault(key.strip(), value.strip())
-        return True
-    except Exception:
-        return False
-
-
-def validate_all_configurations() -> Dict[str, Any]:
+def validate_all_settings() -> Dict[str, Any]:
     """Valida todas as configurações do sistema"""
-    settings = get_settings()
-    validation_result = settings.validate_configuration()
     
-    # Adicionar validações específicas das fases
-    phase2_settings = get_phase2_settings()
-    phase3_settings = get_phase3_settings()
-    agent_settings = get_agent_settings()
+    main_validation = settings.validate_configuration()
     
-    # Verificar soma dos pesos das recomendações
-    weight_sum = sum(phase3_settings.recommendation_weights.values())
-    if abs(weight_sum - 1.0) > 0.01:
-        validation_result["warnings"].append(f"Soma dos pesos de recomendação != 1.0: {weight_sum}")
+    # Validações adicionais para multi-API
+    additional_checks = []
     
-    # Verificar thresholds de classificação
-    thresholds = phase3_settings.classification_thresholds
-    if not (thresholds["venda_forte"] < thresholds["venda"] < thresholds["neutro_inferior"] 
-            < thresholds["neutro_superior"] < thresholds["compra"] < thresholds["compra_forte"]):
-        validation_result["issues"].append("Thresholds de classificação fora de ordem")
+    if settings.api_strategy_enabled:
+        if not any([settings.yfinance_enabled, settings.alpha_vantage_api_key]):
+            additional_checks.append("Estratégia multi-API habilitada mas nenhuma API configurada")
+        
+        if settings.cache_enabled:
+            cache_dir = Path(settings.financial_cache_dir)
+            if not cache_dir.exists():
+                additional_checks.append(f"Diretório de cache não existe: {cache_dir}")
     
-    validation_result["components"] = {
-        "main_settings": "✅",
-        "phase2_settings": "✅",
-        "phase3_settings": "✅",
-        "agent_settings": "✅"
-    }
+    # Combinar resultados
+    result = main_validation.copy()
+    if additional_checks:
+        result["warnings"].extend(additional_checks)
     
-    return validation_result
+    return result
 
 
-# ==================== CARREGAMENTO AUTOMÁTICO ====================
-# Tentar carregar arquivo .env na importação
-load_env_file()
-
-# Validar configurações em desenvolvimento
-if __name__ == "__main__":
-    print("🔧 Validando configurações do sistema...")
+def print_configuration_summary():
+    """Imprime resumo das configurações"""
     
-    validation = validate_all_configurations()
+    validation = validate_all_settings()
     
-    print(f"Ambiente: {validation['environment']}")
-    print(f"Versão: {validation['version']}")
-    print(f"Válido: {'✅' if validation['valid'] else '❌'}")
+    print("⚙️ RESUMO DAS CONFIGURAÇÕES")
+    print("=" * 40)
+    
+    print(f"Ambiente: {settings.environment}")
+    print(f"Versão: {settings.version}")
+    print(f"Debug: {settings.debug}")
+    
+    print(f"\n📡 APIs FINANCEIRAS:")
+    print(f"   • YFinance: {'✅' if settings.yfinance_enabled else '❌'}")
+    print(f"   • Alpha Vantage: {'✅' if settings.alpha_vantage_api_key else '❌'}")
+    print(f"   • Financial Modeling Prep: {'✅' if settings.fmp_api_key else '❌'}")
+    print(f"   • Twelve Data: {'✅' if settings.twelve_data_api_key else '❌'}")
+    
+    print(f"\n💾 CACHE:")
+    print(f"   • Habilitado: {'✅' if settings.cache_enabled else '❌'}")
+    print(f"   • Diretório: {settings.financial_cache_dir}")
+    
+    print(f"\n🤖 AGNO:")
+    print(f"   • API Key: {'✅' if settings.anthropic_api_key != 'your_claude_api_key_here' else '❌'}")
+    print(f"   • Modelo: {settings.claude_model}")
+    
+    print(f"\n🎯 VALIDAÇÃO:")
+    print(f"   • Status: {'✅ Válido' if validation['valid'] else '❌ Problemas encontrados'}")
     
     if validation['issues']:
-        print("\n❌ Problemas encontrados:")
+        print(f"\n❌ PROBLEMAS CRÍTICOS:")
         for issue in validation['issues']:
-            print(f"  - {issue}")
+            print(f"   • {issue}")
     
     if validation['warnings']:
-        print("\n⚠️ Avisos:")
+        print(f"\n⚠️ AVISOS:")
         for warning in validation['warnings']:
-            print(f"  - {warning}")
+            print(f"   • {warning}")
     
-    print("\n📋 Componentes:")
-    for component, status in validation['components'].items():
-        print(f"  {component}: {status}")
-    
-    if validation['valid']:
-        print("\n🎉 Configurações válidas!")
-    else:
-        print("\n🔧 Corrija os problemas antes de continuar.")
+    if validation['info']:
+        print(f"\nℹ️ INFORMAÇÕES:")
+        for info in validation['info']:
+            print(f"   • {info}")
+
+
+if __name__ == "__main__":
+    print_configuration_summary()

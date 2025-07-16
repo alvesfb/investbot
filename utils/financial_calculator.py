@@ -2,6 +2,7 @@
 """
 Calculadora de Indicadores Financeiros para Análise Fundamentalista
 Implementa cálculo de 25+ métricas fundamentalistas com validação automática
+import re  # Para parsing do reasoning_agent
 
 Atualizado: 14/07/2025
 Autor: Claude Sonnet 4
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List, Tuple
 from datetime import datetime
 from enum import Enum
+import re
 
 logger = logging.getLogger(__name__)
 
@@ -186,15 +188,16 @@ class FinancialCalculator:
         self.logger = logging.getLogger(__name__)
         self.sector_benchmarks = self._load_sector_benchmarks()
         
-    def calculate_all_metrics(self, data: FinancialData) -> FinancialMetrics:
+    def calculate_all_metrics(self, data: FinancialData, reasoning_agent=None) -> FinancialMetrics:
         """
         Calcula todas as métricas financeiras disponíveis
         
         Args:
             data: Dados financeiros da empresa
+            reasoning_agent: Agente Agno opcional para análise inteligente
             
         Returns:
-            FinancialMetrics: Todas as métricas calculadas
+            FinancialMetrics: Todas as métricas calculadas (otimizadas se reasoning_agent fornecido)
         """
         self.logger.info(f"Calculando métricas para {data.symbol or 'empresa não identificada'}")
         
@@ -217,7 +220,12 @@ class FinancialCalculator:
             self._calculate_category_scores(data, metrics)
             
             # Calcular score geral
-            metrics.overall_score = self._calculate_overall_score(metrics)
+            if reasoning_agent is not None:
+                # Usar análise inteligente
+                metrics.overall_score = self._calculate_intelligent_score(metrics, data, reasoning_agent)
+            else:
+                # Usar cálculo tradicional
+                metrics.overall_score = self._calculate_overall_score(metrics)
             
             self.logger.info(f"Métricas calculadas com sucesso. Score geral: {metrics.overall_score:.1f}")
             
@@ -489,6 +497,182 @@ class FinancialCalculator:
         
         metrics.category_scores['debt'] = max(debt_score, 0)
     
+    def _calculate_intelligent_score(self, metrics: FinancialMetrics, data: FinancialData, reasoning_agent) -> float:
+        """
+        Calcula score com análise inteligente usando reasoning_agent
+        
+        Args:
+            metrics: Métricas calculadas tradicionalmente
+            data: Dados financeiros originais
+            reasoning_agent: Agente Agno com ReasoningTools
+            
+        Returns:
+            Score otimizado pela análise inteligente
+        """
+        try:
+            # Score base (tradicional)
+            base_score = self._calculate_overall_score(metrics)
+            
+            # Verificar se o reasoning_agent tem o método 'run'
+            if not hasattr(reasoning_agent, 'run'):
+                self.logger.warning("reasoning_agent não tem método 'run' - usando score tradicional")
+                return base_score
+            
+            # Preparar dados para análise inteligente
+            analysis_prompt = self._prepare_reasoning_prompt(metrics, data, base_score)
+            
+            # Executar análise inteligente
+            reasoning_result = reasoning_agent.run(analysis_prompt)
+
+            # Extrair conteúdo do RunResponse
+            reasoning_text = self._extract_reasoning_content(reasoning_result)
+            
+            # Extrair score ajustado
+            adjusted_score = self._extract_adjusted_score(reasoning_text, base_score)
+            
+            self.logger.info(f"Score inteligente: {base_score:.1f} → {adjusted_score:.1f}")
+            
+            return adjusted_score
+            
+        except Exception as e:
+            self.logger.error(f"Erro na análise inteligente: {e}")
+            # Fallback para score tradicional
+            return self._calculate_overall_score(metrics)
+        
+
+    def _extract_reasoning_content(self, reasoning_result) -> str:
+        """Extrai conteúdo de forma robusta do resultado do reasoning_agent"""
+        
+        try:
+            # Caso 1: Já é string
+            if isinstance(reasoning_result, str):
+                return reasoning_result
+            
+            # Caso 2: RunResponse com atributo 'content'
+            if hasattr(reasoning_result, 'content'):
+                content = reasoning_result.content
+                if isinstance(content, str):
+                    return content
+                # Se content é lista (mensagens)
+                elif isinstance(content, list) and len(content) > 0:
+                    if hasattr(content[0], 'text'):
+                        return content[0].text
+                    elif isinstance(content[0], dict) and 'text' in content[0]:
+                        return content[0]['text']
+                    else:
+                        return str(content[0])
+            
+            # Caso 3: Outros atributos comuns
+            for attr in ['text', 'response', 'data', 'result']:
+                if hasattr(reasoning_result, attr):
+                    attr_value = getattr(reasoning_result, attr)
+                    if isinstance(attr_value, str) and len(attr_value) > 10:
+                        return attr_value
+            
+            # Último recurso: converter para string
+            result_str = str(reasoning_result)
+            self.logger.warning(f"Using str() conversion for RunResponse: {result_str[:100]}...")
+            return result_str
+            
+        except Exception as e:
+            self.logger.error(f"Error extracting reasoning content: {e}")
+            return "Error: Could not extract content from RunResponse"
+            
+
+    def _prepare_reasoning_prompt(self, metrics: FinancialMetrics, data: FinancialData, base_score: float) -> str:
+        """Prompt otimizado para garantir formato correto"""
+        
+        return f"""
+    ANÁLISE FUNDAMENTALISTA - RESPOSTA OBRIGATÓRIA
+
+    DADOS:
+    - Empresa: {data.symbol or 'N/A'}
+    - Setor: {data.sector or 'Geral'}
+    - P/L: {metrics.pe_ratio:.2f}% if metrics.pe_ratio else 'N/A'
+    - P/VP: {metrics.pb_ratio:.2f}% if metrics.pb_ratio else 'N/A'
+    - ROE: {metrics.roe:.2f}% if metrics.roe else 'N/A'
+    - Score Atual: {base_score:.1f}
+
+    TAREFA:
+    Analise se o score atual está correto para essas métricas e setor.
+
+    FORMATO OBRIGATÓRIO:
+    Sua resposta DEVE terminar com exatamente esta linha:
+    SCORE_AJUSTADO: [número de 0.0 a 100.0]
+
+    EXEMPLOS CORRETOS:
+    - SCORE_AJUSTADO: 78.5
+    - SCORE_AJUSTADO: 82.0  
+    - SCORE_AJUSTADO: 75.3
+
+    ANÁLISE:
+    """
+        
+        
+    def _extract_adjusted_score(self, reasoning_text: str, fallback_score: float) -> float:
+        """Parser super robusto para qualquer formato de resposta"""
+        
+        try:
+            # Log para debug
+            self.logger.info(f"Parsing response (length: {len(reasoning_text)})")
+            self.logger.debug(f"Full response: {reasoning_text}")
+            
+            # Padrão 1: Formato exato exigido
+            exact_match = re.search(r'SCORE_AJUSTADO:\s*(\d+(?:\.\d+)?)', reasoning_text)
+            if exact_match:
+                score = float(exact_match.group(1))
+                if 0 <= score <= 100:
+                    self.logger.info(f"Score found (exact format): {score}")
+                    return score
+            
+            # Padrão 2: Variações do formato
+            variations = [
+                r'SCORE.*?:\s*(\d+(?:\.\d+)?)',
+                r'Score.*?:\s*(\d+(?:\.\d+)?)',
+                r'(\d+(?:\.\d+)?)\s*/\s*100',
+                r'(\d+(?:\.\d+)?)\s*pontos?',
+                r'(\d+(?:\.\d+)?)\s*seria',
+            ]
+            
+            for i, pattern in enumerate(variations):
+                matches = re.findall(pattern, reasoning_text, re.IGNORECASE)
+                for match in matches:
+                    score = float(match)
+                    if 0 <= score <= 100:
+                        self.logger.info(f"Score found (pattern {i+1}): {score}")
+                        return score
+            
+            # Padrão 3: Último número válido na resposta
+            all_numbers = re.findall(r'\b(\d{1,2}(?:\.\d{1,2})?)\b', reasoning_text)
+            valid_scores = [float(n) for n in all_numbers if 0 <= float(n) <= 100]
+            
+            if valid_scores:
+                # Pegar o último número válido (mais provável ser o score final)
+                final_score = valid_scores[-1]
+                self.logger.info(f"Score found (last valid number): {final_score}")
+                return final_score
+            
+            # Padrão 4: Análise contextual
+            if any(word in reasoning_text.lower() for word in ['melhor', 'aumentar', 'superior', 'mais alto']):
+                adjusted = min(100, fallback_score + 5)
+                self.logger.info(f"Context suggests improvement: {adjusted}")
+                return adjusted
+            
+            if any(word in reasoning_text.lower() for word in ['pior', 'diminuir', 'inferior', 'mais baixo']):
+                adjusted = max(0, fallback_score - 5)
+                self.logger.info(f"Context suggests reduction: {adjusted}")
+                return adjusted
+            
+            # Fallback final
+            self.logger.warning("No valid score found - using fallback")
+            self.logger.warning(f"Response was: {reasoning_text[:200]}...")
+            return fallback_score
+            
+        except Exception as e:
+            self.logger.error(f"Error in robust parsing: {e}")
+            return fallback_score
+
+
     def _calculate_overall_score(self, metrics: FinancialMetrics) -> float:
         """Calcula score geral ponderado"""
         # Pesos das categorias
@@ -654,13 +838,13 @@ if __name__ == "__main__":
     
     # Mostrar resultados
     print(f"📊 RESULTADOS PARA {sample_data.symbol}:")
-    print(f"   P/L: {metrics.pe_ratio:.2f}" if metrics.pe_ratio else "   P/L: N/A")
-    print(f"   P/VP: {metrics.pb_ratio:.2f}" if metrics.pb_ratio else "   P/VP: N/A")
+    print(f"   P/L: {metrics.pe_ratio:.2f}%" if metrics.pe_ratio else "   P/L: N/A")
+    print(f"   P/VP: {metrics.pb_ratio:.2f}%" if metrics.pb_ratio else "   P/VP: N/A")
     print(f"   ROE: {metrics.roe:.2f}%" if metrics.roe else "   ROE: N/A")
     print(f"   Margem Líquida: {metrics.net_margin:.2f}%" if metrics.net_margin else "   Margem Líquida: N/A")
     print(f"   Crescimento Receita 3Y: {metrics.revenue_growth_3y:.2f}%" if metrics.revenue_growth_3y else "   Crescimento: N/A")
-    print(f"   Dívida/Patrimônio: {metrics.debt_to_equity:.2f}" if metrics.debt_to_equity else "   D/E: N/A")
-    print(f"\n🎯 SCORE GERAL: {metrics.overall_score:.1f}/100")
+    print(f"   Dívida/Patrimônio: {metrics.debt_to_equity:.2f}%" if metrics.debt_to_equity else "   D/E: N/A")
+    print(f"\n🎯 SCORE GERAL: {metrics.overall_score:.1f}%/100")
     print(f"📈 Qualidade dos dados: {metrics.data_quality.value if metrics.data_quality else 'N/A'}")
     
     if metrics.warnings:
