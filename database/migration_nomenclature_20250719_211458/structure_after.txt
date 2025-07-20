@@ -1,0 +1,22 @@
+                                Table "public.stocks"
+          Column          |           Type           | Collation | Nullable | Default 
+--------------------------+--------------------------+-----------+----------+---------
+ id                       | uuid                     |           | not null | 
+ symbol                   | character varying(10)    |           | not null | 
+ name                     | character varying(200)   |           | not null | 
+ long_name                | character varying(500)   |           |          | 
+ sector                   | character varying(100)   |           | not null | 
+ industry                 | character varying(100)   |           |          | 
+ sub_industry             | character varying(100)   |           |          | 
+ segment                  | character varying(100)   |           |          | 
+ tax_id                   | character varying(20)    |           |          | 
+ website                  | character varying(300)   |           |          | 
+ description              | text                     |           |          | 
+ ceo                      | character varying(150)   |           |          | 
+ employees                | integer                  |           |          | 
+ founded_year             | smallint                 |           |          | 
+ headquarters_city        | character varying(100)   |           |          | 
+ headquarters_state       | character varying(50)    |           |          | 
+ status                   | stockstatusenum          |           | not null | 
+ listing_segment          | character varying(50)    |           |          | 
+--More-- 

@@ -1,0 +1,114 @@
+# docker-compose.postgresql.yml
+# Setup PostgreSQL para Sistema de Recomendações de Investimentos
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: investment-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: investment_system
+      POSTGRES_USER: investment_user
+      POSTGRES_PASSWORD: investment_secure_pass_2024
+      POSTGRES_INITDB_ARGS: "--encoding=UTF-8 --lc-collate=C --lc-ctype=C"
+    volumes:
+      # Dados persistentes
+      - postgres_data:/var/lib/postgresql/data
+      # Scripts de inicialização
+      - ./database/postgresql/init:/docker-entrypoint-initdb.d
+      # Backup location
+      - ./database/postgresql/backups:/backups
+      # Custom config
+      - ./database/postgresql/postgresql.conf:/etc/postgresql/postgresql.conf
+    ports:
+      - "5432:5432"
+    networks:
+      - investment-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U investment_user -d investment_system"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    command: >
+      postgres
+      -c shared_preload_libraries=pg_stat_statements
+      -c pg_stat_statements.track=all
+      -c max_connections=200
+      -c shared_buffers=256MB
+      -c effective_cache_size=1GB
+      -c maintenance_work_mem=64MB
+      -c checkpoint_completion_target=0.9
+      -c wal_buffers=16MB
+      -c default_statistics_target=100
+
+  # pgAdmin para administração
+  pgadmin:
+    image: dpage/pgadmin4:7
+    container_name: investment-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@investment.local
+      PGADMIN_DEFAULT_PASSWORD: pgadmin_secure_2024
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+      PGADMIN_CONFIG_MASTER_PASSWORD_REQUIRED: "False"
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+      - ./database/postgresql/pgadmin:/pgadmin4/servers.json
+    ports:
+      - "5050:80"
+    networks:
+      - investment-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # Redis para cache (já preparando para fases futuras)
+  redis:
+    image: redis:7-alpine
+    container_name: investment-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes --requirepass redis_secure_2024
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - investment-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "--raw", "incr", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  # Nginx para desenvolvimento (opcional)
+  nginx:
+    image: nginx:alpine
+    container_name: investment-nginx
+    restart: unless-stopped
+    ports:
+      - "8080:80"
+    volumes:
+      - ./nginx/dev.conf:/etc/nginx/nginx.conf:ro
+      - ./logs/nginx:/var/log/nginx
+    networks:
+      - investment-network
+    depends_on:
+      - postgres
+      - pgadmin
+
+# Volumes persistentes
+volumes:
+  postgres_data: {}  # Volume simples, sem bind mount
+  pgadmin_data: {}
+  redis_data: {}
+
+# Network isolada
+networks:
+  investment-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16

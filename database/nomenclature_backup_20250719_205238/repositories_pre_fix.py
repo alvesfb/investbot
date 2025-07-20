@@ -141,7 +141,7 @@ class StockRepository(BaseRepository):
             english_data = self.mapper.map_to_english(stock_data)
             
             # Verificar se já existe
-            symbol = english_data.get('symbol', '').upper()
+            symbol = english_data.get('symbol').upper()
             existing = db.query(Stock).filter(Stock.symbol == symbol).first()
             
             if existing:
@@ -162,7 +162,7 @@ class StockRepository(BaseRepository):
     def create_stock_from_yfinance(self, yf_data: Dict[str, Any]) -> Stock:
         """Cria ação diretamente de dados YFinance (sem mapeamento)"""
         with self._get_session() as db:
-            symbol = yf_data.get('symbol', '').upper()
+            symbol = yf_data.get('symbol').upper()
             
             # Verificar se já existe
             existing = db.query(Stock).filter(Stock.symbol == symbol).first()
@@ -185,7 +185,7 @@ class StockRepository(BaseRepository):
         cleaned = {}
         
         # Campos obrigatórios
-        cleaned['symbol'] = data.get('symbol', '').upper()
+        cleaned['symbol'] = data.get('symbol').upper()
         cleaned['name'] = data.get('name', f"Company {cleaned['symbol']}")
         cleaned['sector'] = data.get('sector', 'Unknown')
         

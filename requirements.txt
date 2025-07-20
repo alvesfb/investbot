@@ -293,3 +293,28 @@ yfinance==0.2.65
 zipfile36==0.1.3
 zope.event==5.0
 zope.interface==7.2
+
+# PostgreSQL Support
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+sqlalchemy==2.0.23
+
+# PostgreSQL Support
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+sqlalchemy==2.0.23
+
+# PostgreSQL Support
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+sqlalchemy==2.0.23
+
+# PostgreSQL Support
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+sqlalchemy==2.0.23
+
+# PostgreSQL Support
+psycopg2-binary==2.9.9
+asyncpg==0.29.0
+sqlalchemy==2.0.23

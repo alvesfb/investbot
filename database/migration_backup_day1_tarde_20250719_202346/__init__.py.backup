@@ -1,25 +1,22 @@
 # database/__init__.py
 """
-Módulo de banco de dados PostgreSQL - Sistema de Recomendações de Investimentos
+Módulo de banco de dados do Sistema de Recomendações de Investimentos
 
 Este módulo contém:
-- Modelos SQLAlchemy PostgreSQL otimizados (models.py)
-- Configuração de conexão PostgreSQL (connection.py)
+- Modelos SQLAlchemy (models.py)
+- Configuração de conexão (connection.py)
 - Repositories para acesso aos dados (repositories.py)
-- Scripts de inicialização PostgreSQL (init_db.py)
+- Scripts de inicialização (init_db.py)
 """
 
-# Imports principais PostgreSQL
+# Imports principais
 from database.models import (
     Base,
     Stock,
     Recommendation,
     FundamentalAnalysis,
     AgentSession,
-    MarketData,
-    DataQualityEnum,
-    StockStatusEnum,
-    RecommendationEnum
+    MarketData
 )
 
 from database.connection import (
@@ -30,9 +27,7 @@ from database.connection import (
     create_tables,
     check_database_connection,
     get_database_info,
-    init_database,
-    backup_database,
-    restore_database
+    init_database
 )
 
 from database.repositories import (
@@ -48,23 +43,20 @@ from database.repositories import (
     get_market_data_repository
 )
 
-# Versão do módulo PostgreSQL
-__version__ = "2.0.0-postgresql"
+# Versão do módulo
+__version__ = "1.0.0"
 
 # Exports principais
 __all__ = [
-    # Modelos PostgreSQL
+    # Modelos
     "Base",
     "Stock",
     "Recommendation",
     "FundamentalAnalysis",
     "AgentSession",
     "MarketData",
-    "DataQualityEnum",
-    "StockStatusEnum", 
-    "RecommendationEnum",
 
-    # Conexão PostgreSQL
+    # Conexão
     "engine",
     "SessionLocal",
     "get_db",
@@ -73,10 +65,8 @@ __all__ = [
     "check_database_connection",
     "get_database_info",
     "init_database",
-    "backup_database",
-    "restore_database",
 
-    # Repositories PostgreSQL
+    # Repositories
     "StockRepository",
     "RecommendationRepository",
     "FundamentalAnalysisRepository",
@@ -88,21 +78,3 @@ __all__ = [
     "get_agent_session_repository",
     "get_market_data_repository"
 ]
-
-
-def get_postgresql_info():
-    """Informações sobre a migração PostgreSQL"""
-    return {
-        "database_type": "PostgreSQL",
-        "version": __version__,
-        "migration_date": "2025-07-19",
-        "features": [
-            "Schema otimizado com 50+ campos",
-            "Tipos nativos PostgreSQL (UUID, DECIMAL, ENUM)",
-            "Índices compostos para performance",
-            "Busca textual com trigram",
-            "Connection pooling otimizado",
-            "Bulk operations eficientes",
-            "Compatibilidade com sistema SQLite anterior"
-        ]
-    }
