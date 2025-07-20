@@ -91,3 +91,6 @@ coverage.xml
 # Temporary files
 tmp/
 temp/
+.env.postgresql
+.env.sqlite_backup
+*.env
