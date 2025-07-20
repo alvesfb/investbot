@@ -94,3 +94,6 @@ temp/
 .env.postgresql
 .env.sqlite_backup
 *.env
+.env.postgresql
+.env.sqlite_backup
+*.env
