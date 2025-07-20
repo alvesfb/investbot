@@ -28,6 +28,8 @@ env/
 ENV/
 .venv/
 .env/
+.env.postgresql/
+.env.sqlite_backup/
 
 # Environment variables
 .env
