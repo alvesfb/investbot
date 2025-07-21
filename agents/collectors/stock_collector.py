@@ -526,8 +526,7 @@ class StockCollectorAgent(Agent):
     def __init__(self):
         super().__init__(
             name="StockCollector",
-            description="Agente especializado em coletar dados de ações brasileiras via YFinance",
-            version="1.0.0"
+            description="Agente especializado em coletar dados de ações brasileiras via YFinance"
         )
         
         self.yfinance_client = YFinanceClient()
@@ -540,47 +539,52 @@ class StockCollectorAgent(Agent):
     
     def _register_tools(self):
         """Registra as ferramentas do agente"""
+
+        if self.tools is None:
+            self.tools = []
+
+
+        self.tools.extend([
+            self.collect_stock_data, 
+            self.update_stock_price, 
+            self.collect_all_active_stocks
+        ])
         
-        @Tool(name="collect_stock_data")
-        async def collect_stock_data(stock_codes: List[str]) -> Dict[str, Any]:
-            """
-            Coleta dados de uma lista de códigos de ações
-            
-            Args:
-                stock_codes: Lista de códigos de ações (ex: ['PETR4', 'VALE3'])
-            
-            Returns:
-                Dict com resultados da coleta
-            """
-            return await self._collect_multiple_stocks(stock_codes)
+    async def collect_stock_data(self, stock_codes: List[str]) -> Dict[str, Any]:
+        """
+        Coleta dados de uma lista de códigos de ações
         
-        @Tool(name="update_stock_price")
-        async def update_stock_price(codigo: str) -> Dict[str, Any]:
-            """
-            Atualiza apenas o preço de uma ação específica
-            
-            Args:
-                codigo: Código da ação (ex: 'PETR4')
-            
-            Returns:
-                Dict com resultado da atualização
-            """
-            return await self._update_single_stock_price(codigo)
+        Args:
+            stock_codes: Lista de códigos de ações (ex: ['PETR4', 'VALE3'])
         
-        @Tool(name="collect_all_active_stocks")
-        async def collect_all_active_stocks() -> Dict[str, Any]:
-            """
-            Coleta dados de todas as ações ativas no banco
-            
-            Returns:
-                Dict com resultados da coleta completa
-            """
-            active_stocks = self.stock_repo.get_all_stocks(ativo_apenas=True)
-            stock_codes = [stock.codigo for stock in active_stocks]
-            return await self._collect_multiple_stocks(stock_codes)
-        
-        self.tools.extend([collect_stock_data, update_stock_price, collect_all_active_stocks])
+        Returns:
+            Dict com resultados da coleta
+        """
+        return await self._collect_multiple_stocks(stock_codes)
     
+    async def update_stock_price(self, codigo: str) -> Dict[str, Any]:
+        """
+        Atualiza apenas o preço de uma ação específica
+        
+        Args:
+            codigo: Código da ação (ex: 'PETR4')
+        
+        Returns:
+            Dict com resultado da atualização
+        """
+        return await self._update_single_stock_price(codigo)
+    
+    async def collect_all_active_stocks(self) -> Dict[str, Any]:
+        """
+        Coleta dados de todas as ações ativas no banco
+        
+        Returns:
+            Dict com resultados da coleta completa
+        """
+        active_stocks = self.stock_repo.get_all_stocks(ativo_apenas=True)
+        stock_codes = [stock.codigo for stock in active_stocks]
+        return await self._collect_multiple_stocks(stock_codes)
+        
     async def _collect_multiple_stocks(self, stock_codes: List[str]) -> Dict[str, Any]:
         """Coleta dados de múltiplas ações"""
         logger.info(f"Iniciando coleta de {len(stock_codes)} ações")
@@ -681,20 +685,40 @@ class StockCollectorAgent(Agent):
             stock_data = await self._collect_single_stock(codigo)
             
             if stock_data and not stock_data.erro:
-                # Atualizar apenas preço e volume
-                success = self.stock_repo.update_stock_price(
-                    codigo, 
-                    stock_data.preco_atual, 
-                    stock_data.volume_medio
-                )
+                # ✅ USAR bulk_update_prices para atualizar
+                updates = [{
+                    'symbol': codigo.upper(),
+                    'current_price': stock_data.preco_atual,
+                    'current_volume': stock_data.volume_medio
+                }]
                 
-                return {
-                    "codigo": codigo,
-                    "success": success,
-                    "preco_atual": stock_data.preco_atual,
-                    "volume_medio": stock_data.volume_medio,
-                    "timestamp": datetime.now().isoformat()
-                }
+                updated_count = self.stock_repo.bulk_update_prices(updates)
+                
+                if updated_count > 0:
+                    return {
+                        "codigo": codigo,
+                        "success": True,
+                        "preco_atual": stock_data.preco_atual,
+                        "volume_medio": stock_data.volume_medio,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                else:
+                    # Se não atualizou, criar nova ação
+                    stock = self.stock_repo.create_stock({
+                        'symbol': codigo.upper(),
+                        'name': stock_data.nome,
+                        'current_price': stock_data.preco_atual,
+                        'average_volume_30d': stock_data.volume_medio,
+                        'sector': stock_data.setor or 'Diversos'
+                    })
+                    
+                    return {
+                        "codigo": codigo,
+                        "success": True,
+                        "preco_atual": stock_data.preco_atual,
+                        "created_new": True,
+                        "timestamp": datetime.now().isoformat()
+                    }
             else:
                 return {
                     "codigo": codigo,
@@ -745,16 +769,16 @@ class StockCollectorAgent(Agent):
                 new_stock_data = {
                     "codigo": stock_data.codigo,
                     "nome": stock_data.nome,
-                    "preco_atual": stock_data.preco_atual,
-                    "volume_medio": stock_data.volume_medio,
+                    "current_price": stock_data.preco_atual,    # ← Nome PostgreSQL
+                    "average_volume": stock_data.volume_medio,   # ← Nome PostgreSQL  
                     "market_cap": stock_data.market_cap,
-                    "p_l": stock_data.p_l,
-                    "p_vp": stock_data.p_vp,
+                    "pe_ratio": stock_data.p_l,                  # ← Nome PostgreSQL
+                    "pb_ratio": stock_data.p_vp,                 # ← Nome PostgreSQL
                     "roe": stock_data.roe,
-                    "setor": stock_data.setor or "Não classificado",
+                    "setor": stock_data.setor or "Diversos",
                     "descricao": stock_data.descricao,
                     "website": stock_data.website,
-                    "ativo": True
+                    "ativo": True  # ← Repository converte automaticamente para status
                 }
                 
                 self.stock_repo.create_stock(new_stock_data)
