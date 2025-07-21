@@ -284,33 +284,21 @@ class StockRepository(BaseRepository):
                 desc(Stock.fundamental_score)
             ).limit(limit).all()
 
-    def search_stocks(self, query: str, filters: Dict = None) -> List[Stock]:
-        """Busca avançada PostgreSQL com filtros"""
+    def search_stocks(self, query: str, limit: int = 10) -> List[Stock]:
+        """Busca textual com trigram similarity"""
         with self._get_session() as db:
-            base_query = db.query(Stock).filter(
+            results = db.query(Stock).filter(
+                or_(
+                    Stock.symbol.ilike(f"%{query.upper()}%"),
+                    Stock.name.ilike(f"%{query}%"),
+                    func.similarity(Stock.name, query) > 0.3
+                ),
                 Stock.status == StockStatusEnum.ACTIVE
-            )
+            ).order_by(
+                desc(func.similarity(Stock.name, query))
+            ).limit(limit).all()
             
-            # Busca textual otimizada PostgreSQL
-            if query:
-                base_query = base_query.filter(
-                    or_(
-                        Stock.codigo.ilike(f"%{query.upper()}%"),
-                        Stock.nome.ilike(f"%{query}%"),
-                        func.similarity(Stock.nome, query) > 0.3
-                    )
-                )
-            
-            # Filtros adicionais
-            if filters:
-                if 'setor' in filters:
-                    base_query = base_query.filter(Stock.setor == filters['setor'])
-                if 'min_market_cap' in filters:
-                    base_query = base_query.filter(Stock.market_cap >= filters['min_market_cap'])
-            
-            return base_query.order_by(
-                desc(func.similarity(Stock.nome, query)) if query else desc(Stock.market_cap)
-            ).limit(20).all()
+            return results
 
     def bulk_update_prices(self, updates: List[Dict[str, Any]]) -> int:
         """Atualização em lote de preços - otimizada PostgreSQL"""
@@ -350,59 +338,6 @@ class StockRepository(BaseRepository):
                 or_(
                     Stock.last_price_update < cutoff_time,
                     Stock.last_price_update.is_(None)
-                )
-            ).order_by(Stock.market_cap.desc()).all()
-        
-    def get_sector_analytics(self, setor: str) -> Dict[str, Any]:
-        """Analytics setoriais usando PostgreSQL agregações"""
-        with self._get_session() as db:
-            result = db.query(
-                func.count(Stock.id).label('total_companies'),
-                func.avg(Stock.pe_ratio).label('avg_pe'),
-                func.avg(Stock.roe).label('avg_roe'),
-                func.sum(Stock.market_cap).label('total_market_cap')
-            ).filter(
-                Stock.setor == setor,
-                Stock.status == StockStatusEnum.ACTIVE
-            ).first()
-            
-            return {
-                'setor': setor,
-                'total_empresas': result.total_companies,
-                'pe_medio': float(result.avg_pe) if result.avg_pe else None,
-                'roe_medio': float(result.avg_roe) if result.avg_roe else None,
-                'market_cap_total': result.total_market_cap
-            }
-
-    def get_stocks_with_quality_score(self, min_score: float = 70.0) -> List[Stock]:
-        """Ações com score de qualidade mínimo - PostgreSQL otimizado"""
-        with self._get_session() as db:
-            return db.query(Stock).filter(
-                Stock.fundamental_score >= min_score,
-                Stock.data_quality == DataQualityEnum.HIGH,
-                Stock.status == StockStatusEnum.ACTIVE
-            ).order_by(desc(Stock.fundamental_score)).all()
-        
-    def get_top_performers_by_metrics(self, metric: str = 'roe', limit: int = 10) -> List[Stock]:
-        """Top performers por métrica específica"""
-        with self._get_session() as db:
-            metric_column = getattr(Stock, metric, Stock.fundamental_score)
-            
-            return db.query(Stock).filter(
-                Stock.status == StockStatusEnum.ACTIVE,
-                metric_column.isnot(None)
-            ).order_by(desc(metric_column)).limit(limit).all()
-
-    def get_stocks_needing_analysis(self, days_threshold: int = 7) -> List[Stock]:
-        """Ações que precisam de nova análise"""
-        with self._get_session() as db:
-            cutoff_date = datetime.now() - timedelta(days=days_threshold)
-            
-            return db.query(Stock).filter(
-                Stock.status == StockStatusEnum.ACTIVE,
-                or_(
-                    Stock.last_fundamentals_update < cutoff_date,
-                    Stock.last_fundamentals_update.is_(None)
                 )
             ).order_by(Stock.market_cap.desc()).all()
 
