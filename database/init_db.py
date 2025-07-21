@@ -280,6 +280,25 @@ async def enrich_with_api_data(symbols: List[str], max_concurrent: int = 5) -> D
     return enriched_data
 
 
+async def populate_with_auto_script():
+    """Integra o auto_populate_real_data.py"""
+    logger.info("🚀 População automática com dados reais...")
+    
+    try:
+        from scripts.auto_populate_real_data import AutoPopulateRealData
+        populator = AutoPopulateRealData()
+        results = await populator.populate_database_automatically()
+        
+        if "error" not in results:
+            total_success = results.get('created', 0) + results.get('updated', 0)
+            logger.info(f"✅ População automática: {total_success} ações")
+            return total_success >= 25
+        return False
+    except Exception as e:
+        logger.error(f"❌ Erro: {e}")
+        return False
+
+
 def create_initial_agent_session():
     """Cria sessão inicial do agente com estatísticas expandidas"""
     agent_repo = get_agent_session_repository()
@@ -434,46 +453,57 @@ def main():
     logger.info("🚀 INICIALIZANDO BANCO DE DADOS - VERSÃO EXPANDIDA")
     logger.info("Sistema com 50+ ações brasileiras + estratégia multi-API")
     logger.info("=" * 60)
-
     try:
+       
         # 1. Backup do banco atual (se existir)
         if hasattr(settings, 'database_path') and settings.database_path and settings.database_path.exists():
             logger.info("📋 Fazendo backup do banco atual...")
             backup_database()
-
+            
         # 2. Inicializar banco
         logger.info("📋 Inicializando estrutura do banco...")
         if not init_database():
             logger.error("❌ Falha na inicialização do banco")
             return False
-
+            
         # 3. Criar tabelas
         logger.info("📋 Criando tabelas...")
         if not create_tables():
             logger.error("❌ Falha na criação das tabelas")
             return False
-
-        # 4. População expandida com dados básicos
-        logger.info("📋 Populando com dados expandidos...")
-        stocks = populate_sample_data()
-
+        
+        # ========== NOVA SEÇÃO: TENTAR POPULAÇÃO AUTOMÁTICA PRIMEIRO ==========
+        logger.info("📋 Tentando população automática com dados reais...")
+        auto_success = asyncio.run(populate_with_auto_script())
+        
+        if auto_success:
+            logger.info("✅ Usando dados da população automática!")
+            # Pegar ações do banco para relatório
+            stock_repo = get_stock_repository()
+            stocks = stock_repo.get_all_stocks()
+        else:
+            # 4. Fallback: População expandida com dados básicos (SEU MÉTODO ORIGINAL)
+            logger.info("📋 Usando população padrão como fallback...")
+            stocks = populate_sample_data()
+        # ========== FIM DA NOVA SEÇÃO ==========
+        
         # 5. Criar sessão inicial
         logger.info("📋 Criando sessão inicial...")
         create_initial_agent_session()
-
+        
         # 6. Validar tudo
         logger.info("📋 Validando banco...")
         if not validate_database():
             logger.error("❌ Falha na validação do banco")
             return False
-
-        # 7. Relatório final expandido
+        
+        # 7. Relatório final expandido (CONTINUA IGUAL)
         db_info = get_database_info()
         sector_distribution = {}
         for stock in stocks:
             sector = getattr(stock, 'sector', 'Unknown')
             sector_distribution[sector] = sector_distribution.get(sector, 0) + 1
-
+            
         logger.info("=" * 60)
         logger.info("🎉 BANCO INICIALIZADO COM SUCESSO - VERSÃO EXPANDIDA!")
         logger.info("=" * 60)
@@ -484,26 +514,41 @@ def main():
         logger.info(f"🏢 Ações: {len(stocks)}")
         logger.info(f"🎯 Meta: 50+ ações brasileiras")
         
+        # ========== ADICIONAR INFORMAÇÃO SOBRE MÉTODO USADO ==========
+        if auto_success:
+            logger.info("🌟 Método usado: População automática com dados reais via API")
+            logger.info("📊 Qualidade: Dados reais do YFinance + fallbacks inteligentes")
+        else:
+            logger.info("📝 Método usado: População padrão expandida")
+            logger.info("📊 Qualidade: Dados estáticos configurados")
+        # ========== FIM DA NOVA INFORMAÇÃO ==========
+       
         logger.info("\n📊 DISTRIBUIÇÃO SETORIAL:")
         for sector, count in sorted(sector_distribution.items()):
             logger.info(f"   {sector}: {count} ações")
-            
+           
         logger.info("\n🌐 ESTRATÉGIA MULTI-API DISPONÍVEL:")
         logger.info("   • YFinance (primário)")
         logger.info("   • Alpha Vantage (fallback)")
         logger.info("   • Financial Modeling Prep (fallback)")
         logger.info("   • Static data (último recurso)")
-        
+       
         logger.info("\n🚀 PRÓXIMOS PASSOS SUGERIDOS:")
-        logger.info("   1. Execute enriquecimento via API:")
-        logger.info("      python -c 'import asyncio; from database.init_db import populate_with_api_enrichment; asyncio.run(populate_with_api_enrichment())'")
-        logger.info("   2. Teste o StockCollector com múltiplas ações")
-        logger.info("   3. Implemente validação de data quality")
-        
+        if auto_success:
+            logger.info("   ✅ População automática concluída - Fase 2 Dia 4 Manhã COMPLETA!")
+            logger.info("   🎯 Próximo: Implementar Fase 3 (Sistema de Recomendações)")
+            logger.info("   📊 Dados reais disponíveis para análises fundamentalistas")
+        else:
+            logger.info("   1. Execute população automática manualmente:")
+            logger.info("      python scripts/auto_populate_real_data.py")
+            logger.info("   2. Ou execute enriquecimento via API:")
+            logger.info("      python -c 'import asyncio; from database.init_db import populate_with_api_enrichment; asyncio.run(populate_with_api_enrichment())'")
+        logger.info("   3. Teste o StockCollector com múltiplas ações")
+        logger.info("   4. Implemente validação de data quality")
+       
         logger.info("=" * 60)
-
         return True
-
+        
     except Exception as e:
         logger.error(f"❌ Erro na inicialização: {e}")
         import traceback
