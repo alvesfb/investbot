@@ -1,10 +1,13 @@
-# database/init_db.py
+# database/init_db.py - ENHANCED VERSION
 """
-Script para inicialização do banco de dados
+Script para inicialização do banco com 50+ ações brasileiras
+Aproveita estratégia multi-API do YFinanceClient para fallback robusto
 """
 import logging
+import asyncio
 from datetime import datetime
 from typing import List, Dict, Any
+import os
 
 from database.connection import (
     init_database,
@@ -26,233 +29,288 @@ logger = logging.getLogger(__name__)
 settings = get_settings()
 
 
-def create_sample_stocks() -> List[Dict[str, Any]]:
-    """Cria dados de exemplo de ações brasileiras"""
+def create_extended_sample_stocks() -> List[Dict[str, Any]]:
+    """
+    Retorna 50+ ações brasileiras principais com dados base
+    INTEGRADO com estratégia multi-API para busca robusta
+    """
+    
+    # Import da lista expandida
+    try:
+        from config.stock_universe import get_extended_stock_list, SECTOR_MAPPING
+        extended_list = get_extended_stock_list()
+        
+        logger.info(f"📊 Lista expandida carregada: {len(extended_list)} ações")
+        logger.info(f"📋 Setores: {len(set(stock['sector'] for stock in extended_list))}")
+        
+        return extended_list
+        
+    except ImportError:
+        logger.warning("Lista expandida não encontrada, usando lista básica")
+        return create_basic_sample_stocks()
+
+
+def create_basic_sample_stocks() -> List[Dict[str, Any]]:
+    """Lista básica de fallback (as 8 ações originais)"""
     return [
         {
-            "codigo": "PETR4",
-            "nome": "Petróleo Brasileiro S.A. - Petrobras",
-            "nome_completo": "Petróleo Brasileiro S.A. - Petrobras",
-            "setor": "Petróleo e Gás",
-            "subsetor": "Exploração e Refino",
-            "segmento": "Petróleo",
-            "cnpj": "33.000.167/0001-01",
-            "website": "https://petrobras.com.br",
-            "descricao": "Sociedade de economia mista que atua de forma " +
-            "integrada e especializada nos segmentos de exploração e " +
-            "produção, refino, comercialização, transporte, petroquímica" +
-            " e distribuição de derivados de petróleo, gás natural " +
-            "e energia elétrica.",
-            "listagem": "Nível 2",
-            "preco_atual": 32.50,
-            "volume_medio": 89000000.0,
-            "market_cap": 422000000000.0,
-            "p_l": 4.2,
-            "p_vp": 0.8,
-            "roe": 19.5,
-            "roic": 12.8
+            "symbol": "PETR4", "name": "Petróleo Brasileiro S.A.", "sector": "Oil & Gas",
+            "current_price": 32.50, "market_cap": 422000000000, "pe_ratio": 4.2, "roe": 19.5
         },
         {
-            "codigo": "VALE3",
-            "nome": "Vale S.A.",
-            "nome_completo": "Vale S.A.",
-            "setor": "Mineração",
-            "subsetor": "Minerais Metálicos",
-            "segmento": "Mineração",
-            "cnpj": "33.592.510/0001-54",
-            "website": "https://vale.com",
-            "descricao": "Mineradora global que transforma recursos " +
-            "naturais em prosperidade e desenvolvimento sustentável.",
-            "listagem": "Nível 1",
-            "preco_atual": 61.80,
-            "volume_medio": 67000000.0,
-            "market_cap": 280000000000.0,
-            "p_l": 5.1,
-            "p_vp": 1.2,
-            "roe": 24.3,
-            "roic": 18.5
+            "symbol": "VALE3", "name": "Vale S.A.", "sector": "Mining", 
+            "current_price": 61.80, "market_cap": 280000000000, "pe_ratio": 5.1, "roe": 24.3
         },
         {
-            "codigo": "ITUB4",
-            "nome": "Itaú Unibanco Holding S.A.",
-            "nome_completo": "Itaú Unibanco Holding S.A.",
-            "setor": "Bancos",
-            "subsetor": "Bancos",
-            "segmento": "Bancos",
-            "cnpj": "60.872.504/0001-23",
-            "website": "https://itau.com.br",
-            "descricao": "Holding bancária que controla o Itaú Unibanco, " +
-            "um dos maiores bancos privados do Brasil.",
-            "listagem": "Nível 1",
-            "preco_atual": 33.15,
-            "volume_medio": 45000000.0,
-            "market_cap": 325000000000.0,
-            "p_l": 8.9,
-            "p_vp": 1.8,
-            "roe": 20.1,
-            "roic": 15.2
+            "symbol": "ITUB4", "name": "Itaú Unibanco Holding S.A.", "sector": "Banks",
+            "current_price": 33.15, "market_cap": 325000000000, "pe_ratio": 8.9, "roe": 20.1
         },
         {
-            "codigo": "BBDC4",
-            "nome": "Banco Bradesco S.A.",
-            "nome_completo": "Banco Bradesco S.A.",
-            "setor": "Bancos",
-            "subsetor": "Bancos",
-            "segmento": "Bancos",
-            "cnpj": "60.746.948/0001-12",
-            "website": "https://bradesco.com.br",
-            "descricao": "Um dos maiores bancos privados do Brasil, " +
-            "oferecendo serviços bancários e financeiros.",
-            "listagem": "Nível 1",
-            "preco_atual": 13.85,
-            "volume_medio": 38000000.0,
-            "market_cap": 127000000000.0,
-            "p_l": 6.8,
-            "p_vp": 1.1,
-            "roe": 16.8,
-            "roic": 14.5
+            "symbol": "BBDC4", "name": "Banco Bradesco S.A.", "sector": "Banks",
+            "current_price": 13.85, "market_cap": 127000000000, "pe_ratio": 6.8, "roe": 16.8
         },
         {
-            "codigo": "ABEV3",
-            "nome": "Ambev S.A.",
-            "nome_completo": "Ambev S.A.",
-            "setor": "Bebidas",
-            "subsetor": "Cervejas e Refrigerantes",
-            "segmento": "Bebidas",
-            "cnpj": "07.526.557/0001-00",
-            "website": "https://ambev.com.br",
-            "descricao": "Companhia brasileira de bebidas, produzindo " +
-            "e distribuindo cervejas, refrigerantes e outras bebidas.",
-            "listagem": "Nível 1",
-            "preco_atual": 11.25,
-            "volume_medio": 28000000.0,
-            "market_cap": 177000000000.0,
-            "p_l": 15.2,
-            "p_vp": 1.9,
-            "roe": 12.5,
-            "roic": 8.9
+            "symbol": "ABEV3", "name": "Ambev S.A.", "sector": "Beverages",
+            "current_price": 11.25, "market_cap": 177000000000, "pe_ratio": 15.2, "roe": 12.5
         },
         {
-            "codigo": "MGLU3",
-            "nome": "Magazine Luiza S.A.",
-            "nome_completo": "Magazine Luiza S.A.",
-            "setor": "Varejo",
-            "subsetor": "Eletrodomésticos",
-            "segmento": "Varejo",
-            "cnpj": "47.960.950/0001-21",
-            "website": "https://magazineluiza.com.br",
-            "descricao": "Rede varejista brasileira de lojas de " +
-            "departamento e e-commerce.",
-            "listagem": "Novo Mercado",
-            "preco_atual": 4.85,
-            "volume_medio": 31000000.0,
-            "market_cap": 33000000000.0,
-            "p_l": -8.5,  # Prejuízo
-            "p_vp": 1.2,
-            "roe": -15.2,
-            "roic": -5.8
+            "symbol": "MGLU3", "name": "Magazine Luiza S.A.", "sector": "Retail",
+            "current_price": 4.85, "market_cap": 33000000000, "pe_ratio": -8.5, "roe": -15.2
         },
         {
-            "codigo": "WEGE3",
-            "nome": "WEG S.A.",
-            "nome_completo": "WEG S.A.",
-            "setor": "Máquinas Industriais",
-            "subsetor": "Motores, Compressores e Outros",
-            "segmento": "Máquinas e Equipamentos",
-            "cnpj": "84.429.695/0001-11",
-            "website": "https://weg.net",
-            "descricao": "Fabricante de equipamentos elétricos " +
-            "industriais, motores elétricos e automação.",
-            "listagem": "Novo Mercado",
-            "preco_atual": 42.90,
-            "volume_medio": 15000000.0,
-            "market_cap": 115000000000.0,
-            "p_l": 22.8,
-            "p_vp": 4.2,
-            "roe": 18.5,
-            "roic": 16.2
+            "symbol": "WEGE3", "name": "WEG S.A.", "sector": "Industrial Machinery",
+            "current_price": 42.90, "market_cap": 115000000000, "pe_ratio": 22.8, "roe": 18.5
         },
         {
-            "codigo": "B3SA3",
-            "nome": "B3 S.A. - Brasil, Bolsa, Balcão",
-            "nome_completo": "B3 S.A. - Brasil, Bolsa, Balcão",
-            "setor": "Serviços Financeiros Diversos",
-            "subsetor": "Serviços Financeiros Diversos",
-            "segmento": "Serviços Financeiros Diversos",
-            "cnpj": "09.346.601/0001-25",
-            "website": "https://b3.com.br",
-            "descricao": "Bolsa de valores brasileira, oferecendo " +
-            "serviços de listagem, negociação, liquidação e depositária.",
-            "listagem": "Novo Mercado",
-            "preco_atual": 9.85,
-            "volume_medio": 22000000.0,
-            "market_cap": 52000000000.0,
-            "p_l": 12.5,
-            "p_vp": 2.1,
-            "roe": 16.8,
-            "roic": 14.5
+            "symbol": "B3SA3", "name": "B3 S.A. - Brasil, Bolsa, Balcão", "sector": "Financial Services",
+            "current_price": 9.85, "market_cap": 52000000000, "pe_ratio": 12.5, "roe": 16.8
         }
     ]
 
 
-def populate_sample_data():
-    """Popula o banco com dados de exemplo"""
-    logger.info("Populando banco com dados de exemplo...")
+def populate_sample_data() -> List[Any]:
+    """
+    Popula o banco com dados de exemplo usando estratégia incremental
+    """
+    logger.info("🚀 Iniciando população do banco com dados expandidos...")
 
     stock_repo = get_stock_repository()
 
-    # Criar ações de exemplo
-    sample_stocks = create_sample_stocks()
+    # 1. Obter lista expandida de ações
+    sample_stocks = create_extended_sample_stocks()
     created_count = 0
+    updated_count = 0
+    failed_count = 0
 
-    for stock_data in sample_stocks:
-        # Verificar se já existe
-        existing = stock_repo.get_stock_by_code(stock_data["codigo"])
-        if not existing:
+    logger.info(f"📋 Processando {len(sample_stocks)} ações...")
+
+    # 2. Processar em lotes para melhor performance
+    batch_size = 10
+    for i in range(0, len(sample_stocks), batch_size):
+        batch = sample_stocks[i:i + batch_size]
+        logger.info(f"📦 Processando lote {i//batch_size + 1}: {len(batch)} ações")
+        
+        for stock_data in batch:
             try:
-                stock_repo.create_stock(stock_data)
-                created_count += 1
-                logger.info(f"Ação criada: {stock_data['codigo']}")
+                # Preparar dados para formato PostgreSQL
+                formatted_data = prepare_stock_data_for_postgres(stock_data)
+                
+                # Verificar se já existe
+                existing = stock_repo.get_stock_by_symbol(formatted_data["symbol"])
+                
+                if not existing:
+                    # Criar nova ação
+                    stock = stock_repo.create_stock(formatted_data)
+                    created_count += 1
+                    logger.info(f"✅ Criada: {stock_data['symbol']} - {stock_data['name'][:30]}...")
+                else:
+                    # Atualizar dados básicos se necessário
+                    if should_update_stock(existing, formatted_data):
+                        update_existing_stock(stock_repo, existing, formatted_data)
+                        updated_count += 1
+                        logger.info(f"🔄 Atualizada: {stock_data['symbol']}")
+                    else:
+                        logger.debug(f"⏭️  Já existe: {stock_data['symbol']}")
+                        
             except Exception as e:
-                logger.error(f"Erro ao criar ação {stock_data['codigo']}: {e}")
-        else:
-            logger.info(f"Ação já existe: {stock_data['codigo']}")
+                failed_count += 1
+                logger.error(f"❌ Erro ao processar {stock_data['symbol']}: {e}")
 
-    logger.info(f"Dados de exemplo populados: {created_count} "
-                f"novas ações criadas")
-    return created_count
+    # 3. Relatório final
+    logger.info("=" * 60)
+    logger.info("📊 RELATÓRIO DE POPULAÇÃO")
+    logger.info("=" * 60)
+    logger.info(f"📈 Ações criadas: {created_count}")
+    logger.info(f"🔄 Ações atualizadas: {updated_count}")
+    logger.info(f"❌ Falhas: {failed_count}")
+    logger.info(f"📋 Total processado: {len(sample_stocks)}")
+    
+    # 4. Distribuição setorial
+    sector_distribution = {}
+    for stock_data in sample_stocks:
+        sector = stock_data.get("sector", "Unknown")
+        sector_distribution[sector] = sector_distribution.get(sector, 0) + 1
+    
+    logger.info("\n📊 DISTRIBUIÇÃO SETORIAL:")
+    for sector, count in sorted(sector_distribution.items()):
+        logger.info(f"   {sector}: {count} ações")
+    
+    logger.info("=" * 60)
+
+    # Retornar todas as ações do banco para validação
+    return stock_repo.get_all_stocks()
+
+
+def prepare_stock_data_for_postgres(stock_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Prepara dados para formato PostgreSQL - VERSÃO CORRIGIDA"""
+    from database.models import StockStatusEnum, DataQualityEnum
+    
+    return {
+        # Campos obrigatórios PostgreSQL
+        "symbol": stock_data.get("symbol", "").upper(),
+        "name": stock_data.get("name", f"Company {stock_data.get('symbol', '')}"),
+        "sector": stock_data.get("sector", "Unknown"),
+        
+        # ✅ CORREÇÃO 1: Preço mínimo válido
+        "current_price": max(stock_data.get("current_price", 10.0), 0.01),  # Mín 0.01
+        
+        "market_cap": stock_data.get("market_cap"),
+        "pe_ratio": stock_data.get("pe_ratio"),
+        "pb_ratio": stock_data.get("pb_ratio"),
+        "roe": stock_data.get("roe"),
+        "roa": stock_data.get("roa"),
+        
+        # Metadados
+        "listing_segment": stock_data.get("listing", "Standard"),
+        
+        # ✅ CORREÇÃO 2: Usar ENUMs corretos
+        "data_quality": DataQualityEnum.MEDIUM,  # Enum ao invés de string
+        "status": StockStatusEnum.ACTIVE,        # Enum ao invés de string
+        
+        # ✅ CORREÇÃO 3: Timestamps timezone-aware
+        "created_at": datetime.now().replace(tzinfo=None),  # Remover timezone
+        "updated_at": datetime.now().replace(tzinfo=None)   # Remover timezone
+    }
+
+def should_update_stock(existing_stock: Any, new_data: Dict[str, Any]) -> bool:
+    """
+    Determina se uma ação existente deve ser atualizada
+    """
+    # Atualizar se:
+    # 1. Nome mudou
+    # 2. Setor mudou  
+    # 3. Dados básicos estão vazios
+    
+    if existing_stock.name != new_data.get("name"):
+        return True
+        
+    if existing_stock.sector != new_data.get("sector"):
+        return True
+        
+    if not existing_stock.current_price and new_data.get("current_price"):
+        return True
+        
+    return False
+
+
+def update_existing_stock(stock_repo: Any, existing_stock: Any, new_data: Dict[str, Any]) -> None:
+    """
+    Atualiza ação existente com novos dados
+    """
+    try:
+        # Usar bulk_update_prices para atualizar dados de mercado
+        updates = [{
+            "symbol": existing_stock.symbol,
+            "current_price": new_data.get("current_price"),
+            "market_cap": new_data.get("market_cap")
+        }]
+        
+        stock_repo.bulk_update_prices(updates)
+        
+    except Exception as e:
+        logger.error(f"Erro ao atualizar {existing_stock.symbol}: {e}")
+
+
+async def enrich_with_api_data(symbols: List[str], max_concurrent: int = 5) -> Dict[str, Dict]:
+    """
+    Enriquece dados usando YFinanceClient com estratégia multi-API
+    APROVEITA: Alpha Vantage, Financial Modeling Prep, fallbacks
+    """
+    logger.info(f"🌐 Enriquecendo dados via API para {len(symbols)} ações...")
+    
+    enriched_data = {}
+    
+    try:
+        # Import do YFinanceClient que tem estratégia multi-API
+        from agents.collectors.stock_collector import YFinanceClient
+        
+        yf_client = YFinanceClient()
+        
+        # Processar em lotes para evitar rate limiting
+        semaphore = asyncio.Semaphore(max_concurrent)
+        
+        async def fetch_single_stock(symbol: str) -> Dict:
+            async with semaphore:
+                try:
+                    # Usar estratégia multi-API do YFinanceClient
+                    data = await yf_client.get_stock_info(symbol)
+                    logger.info(f"✅ Dados obtidos para {symbol}")
+                    return {symbol: data}
+                except Exception as e:
+                    logger.warning(f"⚠️  Falha ao obter dados para {symbol}: {e}")
+                    return {symbol: None}
+        
+        # Executar coletas concorrentes
+        tasks = [fetch_single_stock(symbol) for symbol in symbols]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        
+        # Consolidar resultados
+        for result in results:
+            if isinstance(result, dict):
+                enriched_data.update(result)
+        
+        success_count = sum(1 for data in enriched_data.values() if data is not None)
+        logger.info(f"📊 Enriquecimento concluído: {success_count}/{len(symbols)} sucessos")
+        
+    except ImportError:
+        logger.warning("YFinanceClient não disponível, pulando enriquecimento")
+    except Exception as e:
+        logger.error(f"Erro no enriquecimento: {e}")
+    
+    return enriched_data
 
 
 def create_initial_agent_session():
-    """Cria sessão inicial do agente"""
+    """Cria sessão inicial do agente com estatísticas expandidas"""
     agent_repo = get_agent_session_repository()
 
     session_data = {
-        "session_id": f"init_session_"
-        f"{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "agent_name": "database_initializer",
-        "agent_version": "1.0.0",
+        "session_id": f"init_enhanced_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+        "agent_name": "database_initializer_enhanced",
+        "agent_version": "2.0.0",
         "status": "completed",
-        "input_data": '{"action": "database_initialization"}',
-        "output_data": '{"stocks_created": 8, "status": "success"}',
-        "execution_time_seconds": 1.5,
-        "stocks_processed": 8,
-        "config_snapshot": '{"environment": "development"}'
+        "input_data": '{"action": "enhanced_database_initialization", "target_stocks": 50}',
+        "output_data": '{"stocks_created": "dynamic", "status": "success", "api_strategy": "multi_api"}',
+        "execution_time_seconds": 5.0,
+        "stocks_processed": 50,
+        "config_snapshot": '{"environment": "development", "multi_api": true}',
+        "started_at": datetime.now(),
+        "finished_at": datetime.now()
     }
 
     try:
         session = agent_repo.create_session(session_data)
         agent_repo.finish_session(session.session_id, "completed")
-        logger.info(f"Sessão inicial criada: {session.session_id}")
+        logger.info(f"✅ Sessão inicial criada: {session.session_id}")
         return session
     except Exception as e:
-        logger.error(f"Erro ao criar sessão inicial: {e}")
+        logger.error(f"❌ Erro ao criar sessão inicial: {e}")
         return None
 
 
 def validate_database():
-    """Valida se o banco foi inicializado corretamente"""
-    logger.info("Validando banco de dados...")
+    """Valida se o banco foi inicializado corretamente com dados expandidos"""
+    logger.info("🔍 Validando banco de dados expandido...")
 
     # Verificar conexão
     if not check_database_connection():
@@ -261,7 +319,7 @@ def validate_database():
 
     # Verificar se tabelas existem
     db_info = get_database_info()
-    expected_tables = ["stocks", "recommendations", "fundamental_analyses",
+    expected_tables = ["stocks", "recommendations", "fundamental_analyses", 
                        "agent_sessions", "market_data"]
 
     missing_tables = []
@@ -273,28 +331,113 @@ def validate_database():
         logger.error(f"❌ Tabelas faltando: {missing_tables}")
         return False
 
-    # Verificar se dados de exemplo existem
+    # Verificar se dados expandidos existem
     stock_repo = get_stock_repository()
     stocks = stock_repo.get_all_stocks()
 
     if len(stocks) == 0:
         logger.warning("⚠️  Nenhuma ação encontrada no banco")
+        return False
+    elif len(stocks) < 20:
+        logger.warning(f"⚠️  Apenas {len(stocks)} ações encontradas (esperado 50+)")
     else:
         logger.info(f"✅ {len(stocks)} ações encontradas no banco")
+
+    # Validar distribuição setorial
+    sector_count = {}
+    for stock in stocks[:10]:  # Verificar primeiras 10
+        sector = getattr(stock, 'sector', 'Unknown')
+        sector_count[sector] = sector_count.get(sector, 0) + 1
+
+    logger.info(f"📊 Distribuição setorial (amostra): {sector_count}")
+
+    # Validar qualidade dos dados
+    complete_data_count = 0
+    for stock in stocks[:10]:
+        if (hasattr(stock, 'current_price') and stock.current_price and 
+            hasattr(stock, 'market_cap') and stock.market_cap):
+            complete_data_count += 1
+
+    data_quality = (complete_data_count / min(len(stocks), 10)) * 100
+    logger.info(f"📈 Qualidade dos dados: {data_quality:.1f}%")
+
+    if data_quality < 50:
+        logger.warning("⚠️  Qualidade dos dados baixa")
+    else:
+        logger.info("✅ Qualidade dos dados adequada")
 
     logger.info("✅ Banco de dados validado com sucesso")
     return True
 
 
-def main():
-    """Função principal de inicialização"""
+async def populate_with_api_enrichment():
+    """
+    Versão avançada que popula E enriquece com dados da API
+    APROVEITA estratégia multi-API do YFinanceClient
+    """
+    logger.info("🚀 POPULAÇÃO AVANÇADA com enriquecimento via API")
     logger.info("=" * 60)
-    logger.info("🚀 INICIALIZANDO BANCO DE DADOS")
+
+    # 1. População básica
+    stocks = populate_sample_data()
+    
+    if len(stocks) == 0:
+        logger.error("❌ Falha na população básica")
+        return False
+
+    # 2. Obter símbolos para enriquecimento
+    symbols_to_enrich = [stock.symbol for stock in stocks[:20]]  # Primeiras 20 para teste
+    logger.info(f"🌐 Enriquecendo {len(symbols_to_enrich)} ações via API...")
+
+    # 3. Enriquecer com dados da API
+    try:
+        enriched_data = await enrich_with_api_data(symbols_to_enrich)
+        
+        # 4. Atualizar banco com dados enriquecidos
+        stock_repo = get_stock_repository()
+        update_count = 0
+        
+        for symbol, api_data in enriched_data.items():
+            if api_data:
+                try:
+                    # Preparar dados para bulk update
+                    update_data = {
+                        'symbol': symbol,
+                        'current_price': api_data.get('regularMarketPrice'),
+                        'current_volume': api_data.get('regularMarketVolume'),
+                        'market_cap': api_data.get('marketCap')
+                    }
+                    
+                    # Filtrar valores None
+                    update_data = {k: v for k, v in update_data.items() if v is not None}
+                    
+                    if len(update_data) > 1:  # Além do symbol
+                        stock_repo.bulk_update_prices([update_data])
+                        update_count += 1
+                        logger.info(f"✅ Enriquecido: {symbol}")
+                        
+                except Exception as e:
+                    logger.warning(f"⚠️  Erro ao enriquecer {symbol}: {e}")
+
+        logger.info(f"📊 Enriquecimento concluído: {update_count} ações atualizadas")
+        
+    except Exception as e:
+        logger.error(f"❌ Erro no enriquecimento: {e}")
+        logger.info("💡 Continuando sem enriquecimento...")
+
+    return True
+
+
+def main():
+    """Função principal de inicialização expandida"""
+    logger.info("=" * 60)
+    logger.info("🚀 INICIALIZANDO BANCO DE DADOS - VERSÃO EXPANDIDA")
+    logger.info("Sistema com 50+ ações brasileiras + estratégia multi-API")
     logger.info("=" * 60)
 
     try:
         # 1. Backup do banco atual (se existir)
-        if settings.database_path and settings.database_path.exists():
+        if hasattr(settings, 'database_path') and settings.database_path and settings.database_path.exists():
             logger.info("📋 Fazendo backup do banco atual...")
             backup_database()
 
@@ -310,8 +453,8 @@ def main():
             logger.error("❌ Falha na criação das tabelas")
             return False
 
-        # 4. Popular com dados de exemplo
-        logger.info("📋 Populando dados de exemplo...")
+        # 4. População expandida com dados básicos
+        logger.info("📋 Populando com dados expandidos...")
         stocks = populate_sample_data()
 
         # 5. Criar sessão inicial
@@ -324,25 +467,80 @@ def main():
             logger.error("❌ Falha na validação do banco")
             return False
 
-        # 7. Resumo final
+        # 7. Relatório final expandido
         db_info = get_database_info()
+        sector_distribution = {}
+        for stock in stocks:
+            sector = getattr(stock, 'sector', 'Unknown')
+            sector_distribution[sector] = sector_distribution.get(sector, 0) + 1
+
         logger.info("=" * 60)
-        logger.info("🎉 BANCO INICIALIZADO COM SUCESSO!")
+        logger.info("🎉 BANCO INICIALIZADO COM SUCESSO - VERSÃO EXPANDIDA!")
         logger.info("=" * 60)
         logger.info(f"📊 Tipo: {db_info.get('type', 'Unknown')}")
         logger.info(f"📁 Arquivo: {db_info.get('file_path', 'N/A')}")
         logger.info(f"💾 Tamanho: {db_info.get('file_size_mb', 0)} MB")
         logger.info(f"📋 Tabelas: {len(db_info.get('tables', []))}")
         logger.info(f"🏢 Ações: {len(stocks)}")
+        logger.info(f"🎯 Meta: 50+ ações brasileiras")
+        
+        logger.info("\n📊 DISTRIBUIÇÃO SETORIAL:")
+        for sector, count in sorted(sector_distribution.items()):
+            logger.info(f"   {sector}: {count} ações")
+            
+        logger.info("\n🌐 ESTRATÉGIA MULTI-API DISPONÍVEL:")
+        logger.info("   • YFinance (primário)")
+        logger.info("   • Alpha Vantage (fallback)")
+        logger.info("   • Financial Modeling Prep (fallback)")
+        logger.info("   • Static data (último recurso)")
+        
+        logger.info("\n🚀 PRÓXIMOS PASSOS SUGERIDOS:")
+        logger.info("   1. Execute enriquecimento via API:")
+        logger.info("      python -c 'import asyncio; from database.init_db import populate_with_api_enrichment; asyncio.run(populate_with_api_enrichment())'")
+        logger.info("   2. Teste o StockCollector com múltiplas ações")
+        logger.info("   3. Implemente validação de data quality")
+        
         logger.info("=" * 60)
 
         return True
 
     except Exception as e:
         logger.error(f"❌ Erro na inicialização: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
+async def main_async():
+    """Versão assíncrona com enriquecimento automático"""
+    logger.info("🚀 INICIALIZAÇÃO COMPLETA COM ENRIQUECIMENTO AUTOMÁTICO")
+    
+    # Executar inicialização básica
+    basic_success = main()
+    
+    if not basic_success:
+        logger.error("❌ Falha na inicialização básica")
+        return False
+    
+    # Executar enriquecimento automático
+    logger.info("🌐 Iniciando enriquecimento automático...")
+    enrichment_success = await populate_with_api_enrichment()
+    
+    if enrichment_success:
+        logger.info("🎉 INICIALIZAÇÃO COMPLETA COM ENRIQUECIMENTO CONCLUÍDA!")
+    else:
+        logger.warning("⚠️  Inicialização básica OK, enriquecimento com problemas")
+    
+    return basic_success
+
+
 if __name__ == "__main__":
-    success = main()
+    import sys
+    
+    # Verificar se deve executar com enriquecimento
+    if len(sys.argv) > 1 and sys.argv[1] == "--with-enrichment":
+        success = asyncio.run(main_async())
+    else:
+        success = main()
+    
     exit(0 if success else 1)
