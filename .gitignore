@@ -30,11 +30,13 @@ ENV/
 .env/
 .env.postgresql/
 .env.sqlite_backup/
+.env.development/
 
 # Environment variables
 .env
 .env.local
 .env.production
+.env.development
 
 # IDE
 .vscode/
